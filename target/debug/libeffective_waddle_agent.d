@@ -1,0 +1,1 @@
+/Users/rlaisqls/Documents/github/effective-waddle-agent/target/debug/libeffective_waddle_agent.rlib: /Users/rlaisqls/Documents/github/effective-waddle-agent/src/java/java.rs /Users/rlaisqls/Documents/github/effective-waddle-agent/src/java/mod.rs /Users/rlaisqls/Documents/github/effective-waddle-agent/src/lib.rs
