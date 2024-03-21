@@ -4,6 +4,7 @@ extern crate lru;
 use lru::LruCache;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::num::NonZeroUsize;
 
 pub trait Resource {
     fn refresh(&mut self);
@@ -19,7 +20,8 @@ pub struct GCache<K: Hash + Eq + Clone, V: Resource> {
 
 impl<K: Hash + Eq + Clone, V: Resource> GCache<K, V> {
     pub fn new(options: GCacheOptions) -> Self {
-        let lru_cache = LruCache::<K, Entry<V>>::new(options.size);
+        let lru_cache_size = NonZeroUsize::try_from(options.size).unwrap();
+        let lru_cache = LruCache::<K, Entry<V>>::new(lru_cache_size);
         let round_cache = HashMap::<K, Entry<V>>::new();
 
         Self { options, round_cache, lru_cache, round: 0 }
@@ -48,32 +50,34 @@ impl<K: Hash + Eq + Clone, V: Resource> GCache<K, V> {
     }
 
     pub fn cache(&mut self, k: K, v: V) {
-        let entry = Entry { v, round: self.round };
+        let mut entry = Entry { v, round: self.round };
         entry.v.refresh();
         self.lru_cache.put(k.clone(), entry.clone());
         self.round_cache.insert(k, entry);
     }
 
     pub fn update(&mut self, options: GCacheOptions) {
-        self.lru_cache.resize(options.size);
+        let lru_cache_size = NonZeroUsize::try_from(options.size).unwrap();
+        self.lru_cache.resize(lru_cache_size);
         self.options = options;
     }
 
     pub fn cleanup(&mut self) {
-        let keys: Vec<K> = self.lru_cache.iter().map(|(k, _)| k.clone()).collect();
+        let keys: Vec<K> = self.lru_cache.keys().cloned().collect();
         for key in keys {
             if let Some(entry) = self.lru_cache.get_mut(&key) {
                 entry.v.cleanup();
             }
         }
 
-        let mut next_round_cache = HashMap::<K, Entry<V>>::new();
-        for (k, entry) in &self.round_cache {
-            entry.v.cleanup();
-            if entry.round >= self.round - self.options.keep_rounds {
-                next_round_cache.insert(k.clone(), entry.clone());
-            }
-        }
+        let next_round_cache = self.round_cache.iter_mut()
+            .map(|(k, entry)| {
+                let mut entry = entry.clone(); // Clone the entry
+                entry.v.cleanup(); // Mutate the cloned entry
+                (*k.clone(), entry) // Return the key-value pair for insertion into next_round_cache
+            })
+            .filter(|(_, entry)| entry.round >= self.round - self.options.keep_rounds)
+            .collect::<HashMap<_, _>>();
         self.round_cache = next_round_cache;
     }
 
