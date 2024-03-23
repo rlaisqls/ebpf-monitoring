@@ -1,3 +1,9 @@
+use log::error;
+use crate::ebpf::metrics;
+use crate::ebpf::symtab::elf_cache::{ElfCache, ElfCacheDebugInfo};
+use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo};
+use crate::ebpf::metrics::symtab::SymtabMetrics;
+use crate::ebpf::symtab::table::SymbolTab;
 
 type PidKey = u32;
 
@@ -8,9 +14,8 @@ pub struct SymbolCache {
     pid_cache: GCache<PidKey, ProcTable>,
     elf_cache: ElfCache,
     kallsyms: Option<SymbolTab>,
-    logger: log::Logger,
     options: CacheOptions,
-    metrics: metrics::SymtabMetrics,
+    metrics: SymtabMetrics,
 }
 
 pub struct CacheOptions {
@@ -21,7 +26,7 @@ pub struct CacheOptions {
 }
 
 impl SymbolCache {
-    pub fn new(logger: log::Logger, options: CacheOptions, metrics: &metrics::SymtabMetrics) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(options: CacheOptions, metrics: &SymtabMetrics) -> Result<Self, Box<dyn std::error::Error>> {
         if metrics.is_none() {
             panic!("metrics is nil");
         }
@@ -30,7 +35,6 @@ impl SymbolCache {
         let pid_cache = GCache::<PidKey, ProcTable>::new(options.pid_cache_options)?;
 
         Ok(Self {
-            logger,
             pid_cache,
             kallsyms: None,
             elf_cache,

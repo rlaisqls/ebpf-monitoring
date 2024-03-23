@@ -118,7 +118,7 @@ impl Component for WriteComponent {
         Ok(())
     }
 
-    async fn update(&mut self, new_cfg: Arguments) -> Result<(), Box<dyn Error>> {
+    async fn update(&mut self, new_cfg: Arguments) -> Result<()> {
         self.cfg = new_cfg.clone();
         // Assuming level.Debug and Log are part of a logging library
         debug!(self.opts.logger, "updating pyroscope.write config"; "old" => format!("{:?}", self.cfg), "new" => format!("{:?}", new_config));
@@ -139,7 +139,7 @@ struct FanOutClient {
 }
 
 impl FanOutClient {
-    async fn new(opts: Options, config: Arguments, metrics: Arc<Metrics>) -> Result<Self, Box<dyn Error>> {
+    async fn new(opts: Options, config: Arguments, metrics: Arc<Metrics>) -> Result<Self> {
         let mut clients = Vec::with_capacity(config.endpoints.len());
 
         for endpoint in &config.endpoints {
@@ -152,7 +152,7 @@ impl FanOutClient {
         })
     }
 
-    async fn push(&self, req: PushRequest) -> Result<PushResponse, Box<dyn Error>> {
+    async fn push(&self, req: PushRequest) -> Result<PushResponse> {
         let (tx, rx) = oneshot::channel();
         let mut errors = Vec::new();
         let (req_size, profile_count) = request_size(&req);

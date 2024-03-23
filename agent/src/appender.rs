@@ -11,7 +11,7 @@ struct RawSample {
 }
 
 pub trait Appender {
-    fn append(&self, samples: Vec<RawSample>) -> Result<(), Box<dyn Error>>;
+    fn append(&self, samples: Vec<RawSample>) -> Result<()>;
 }
 
 pub trait Appendable {
@@ -62,7 +62,7 @@ struct AppenderImpl {
 }
 
 impl Appender for AppenderImpl {
-    fn append(&self, samples: Vec<RawSample>) -> Result<(), Box<dyn Error>> {
+    fn append(&self, samples: Vec<RawSample>) -> Result<()> {
         let start_time = Instant::now();
         for child in self.children.iter() {
             child.appender().append(samples.clone())?;

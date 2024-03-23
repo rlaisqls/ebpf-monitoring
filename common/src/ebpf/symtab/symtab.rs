@@ -1,4 +1,5 @@
-use crate::elf::SymTabDebugInfo;
+use goblin::pe::symbol::Symbol;
+use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
 
 pub trait SymbolTable {
     fn refresh(&mut self);
@@ -17,19 +18,15 @@ pub trait SymbolNameResolver {
 pub struct NoopSymbolNameResolver;
 
 impl SymbolNameResolver for NoopSymbolNameResolver {
+    fn refresh(&mut self) {}
+    fn cleanup(&mut self) {}
+    fn debug_info(&self) -> SymTabDebugInfo {
+        SymTabDebugInfo::default()
+    }
     fn is_dead(&self) -> bool {
         false
     }
-
-    fn debug_info(&self) -> SymTabDebugInfo {
-        SymTabDebugInfo {}
-    }
-
     fn resolve(&self, _addr: u64) -> String {
         String::new()
     }
-
-    fn refresh(&mut self) {}
-
-    fn cleanup(&mut self) {}
 }

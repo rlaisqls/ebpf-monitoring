@@ -1,3 +1,3 @@
-mod symbol_table;
-mod elfmmap;
-mod elf_sym;
+pub mod symbol_table;
+pub mod elfmmap;
+mod buildid;

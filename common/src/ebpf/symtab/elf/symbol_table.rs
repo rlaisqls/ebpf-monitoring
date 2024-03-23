@@ -1,34 +1,16 @@
-use std::cmp::Ordering;
-use std::error::Error;
-use std::fmt;
-use std::fs::File;
-use std::io::{Read, Seek};
-use std::path::Path;
+use goblin::elf::SectionHeader;
 
-// Define custom error type for SymbolTable
-#[derive(Debug)]
-struct SymbolTableError;
-
-impl Error for SymbolTableError {}
+use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
+use crate::ebpf::symtab::gosym::pcindex::PCIndex;
+use crate::error::{Error::NotFound, Result};
 
 pub struct SymbolIndex {
     pub(crate) name: Name,
     pub(crate) value: u64,
 }
 
-impl fmt::Display for SymbolTableError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "failed to get symbols")
-    }
-}
-
-#[derive(Clone, Copy)]
-struct SectionHeader {
-    // Define fields here...
-}
-
 pub(crate) struct Name(u32);
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct SectionLinkIndex(u8);
 
 pub(crate) const SECTION_TYPE_SYM: SectionLinkIndex = SectionLinkIndex(0);
@@ -54,10 +36,10 @@ struct FlatSymbolIndex {
     values: PCIndex,
 }
 
-struct SymbolTable {
+#[derive(Debug)]
+pub struct SymbolTable {
     index: FlatSymbolIndex,
-    file: MMapedElfFile,
-    demangle_options: Vec<demangle::Option>,
+    file: MappedElfFile
 }
 
 impl SymbolTable {
@@ -69,8 +51,8 @@ impl SymbolTable {
         SymTabDebugInfo {
             name: format!("SymbolTable {:?}", self),
             size: self.index.names.len(),
-            file: self.file.fpath.clone(),
-            last_used_round: 0, // This value needs to be tracked somewhere
+            file: self.file.fpath.clone().unwrap_or_default().to_str(),
+            last_used_round: 0,
         }
     }
 
@@ -88,7 +70,7 @@ impl SymbolTable {
         )
     }
 
-    fn resolve(&self, addr: u64) -> String {
+    fn resolve(&mut self, addr: u64) -> String {
         if self.index.names.is_empty() {
             return String::new();
         }
@@ -104,76 +86,35 @@ impl SymbolTable {
         self.file.close();
     }
 
-    fn symbol_name(&self, idx: usize) -> Result<String, SymbolTableError> {
-        let link_index = self.index.names[idx].link_index() as usize;
+    fn symbol_name(&mut self, idx: usize) -> Result<String> {
+        let link_index = self.index.names[idx].link_index();
         let section_header_link = &self.index.links[link_index];
         let name_index = self.index.names[idx].name_index();
-        let (s, b) = self.file.get_string((name_index + section_header_link.offset) as usize, &self.demangle_options);
+
+        let (s, b) = self.file.get_string(
+            (name_index + section_header_link.sh_offset) as usize
+        ).unwrap();
         if !b {
-            return Err(SymbolTableError);
+            return Err(NotFound(format!("failed to get symbols {:?}", link_index)));
         }
         Ok(s)
     }
 }
 
-struct SymTabDebugInfo {
+pub struct SymTabDebugInfo {
     name: String,
     size: usize,
     file: String,
     last_used_round: usize,
 }
 
-struct MMapedElfFile {
-    // Define fields here...
-}
-
-impl MMapedElfFile {
-    fn new<P: AsRef<Path>>(path: P) -> Result<Self, SymbolTableError> {
-        // Implement MMapedElfFile::new
-        unimplemented!()
-    }
-
-    fn get_symbols(&self, section_type: u32, opt: &SymbolsOptions) -> Result<(Vec<SymbolIndex>, usize), SymbolTableError> {
-        // Implement MMapedElfFile::get_symbols
-        unimplemented!()
-    }
-
-    fn close(&mut self) {
-        // Implement MMapedElfFile::close
-        unimplemented!()
-    }
-}
-
-impl fmt::Display for MMapedElfFile {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Implement fmt::Display for MMapedElfFile
-        unimplemented!()
-    }
-}
-
-#[derive(Clone)]
-struct SymbolsOptions {
-    filter_from: u64,
-    filter_to: u64
-}
-
-impl SymbolsOptions {
-    fn new() -> Self {
-        // Implement SymbolsOptions::new
-        unimplemented!()
-    }
-}
-
-impl fmt::Display for SymbolsOptions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Implement fmt::Display for SymbolsOptions
-        unimplemented!()
-    }
-}
-
-impl fmt::Debug for SymbolsOptions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Implement fmt::Debug for SymbolsOptions
-        unimplemented!()
+impl Default for SymTabDebugInfo {
+    fn default() -> Self {
+        SymTabDebugInfo {
+            name: "".to_string(),
+            size: 0,
+            file: "".to_string(),
+            last_used_round: 0,
+        }
     }
 }

@@ -1,7 +1,8 @@
 use std::sync::Mutex;
+use crate::ebpf::symtab::gcache::GCache;
 
 pub struct ElfCache {
-    build_id_cache: Mutex<GCache<elf::BuildID, SymbolNameResolver>>,
+    build_id_cache: Mutex<GCache<BuildID, SymbolNameResolver>>,
     same_file_cache: Mutex<GCache<Stat, SymbolNameResolver>>,
 }
 

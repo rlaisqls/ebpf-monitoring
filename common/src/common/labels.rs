@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
@@ -11,7 +11,7 @@ pub struct Label {
 }
 
 impl Label {
-    fn new(name: &str, value: &str) -> Self {
+    pub fn new(name: String, value: String) -> Self {
         Self {
             name: name.to_string(),
             value: value.to_string(),
@@ -32,25 +32,27 @@ impl Hash for Label {
     }
 }
 
-// Define the Labels struct
 #[derive(Debug, Clone)]
 pub struct Labels(Vec<Label>);
 
 impl Labels {
-    fn new(labels: Vec<Label>) -> Self {
-        Self(labels)
+    pub(crate) fn new(labels: Vec<Label>) -> Self { Self(labels) }
+    pub fn from_map(hashmap: HashMap<String, String>) -> Labels {
+        Labels(
+            hashmap
+                .into_iter()
+                .map(|(name, value)| Label::new(name, value))
+                .collect()
+        )
     }
-
     fn len(&self) -> usize {
         self.0.len()
     }
-
     fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
 
-// Implement the fmt::Display trait for Labels
 impl fmt::Display for Labels {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{{")?;
@@ -64,10 +66,8 @@ impl fmt::Display for Labels {
     }
 }
 
-// Implement the FromStr trait for Labels
 impl FromStr for Labels {
     type Err = ();
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut labels = vec![];
         let pairs: Vec<&str> = s.trim_matches(|p| p == '{' || p == '}').split(',').collect();
@@ -78,13 +78,12 @@ impl FromStr for Labels {
             }
             let name = parts[0].trim();
             let value = parts[1].trim_matches('"');
-            labels.push(Label::new(name, value));
+            labels.push(Label::new(name.to_string(), value.to_string()));
         }
         Ok(Labels::new(labels))
     }
 }
 
-// Define the LabelsMap struct
 #[derive(Debug, Clone)]
 struct LabelsMap(BTreeMap<String, String>);
 

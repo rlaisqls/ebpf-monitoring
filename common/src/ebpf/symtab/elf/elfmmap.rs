@@ -10,6 +10,7 @@ use goblin::elf::header::{EI_CLASS, ELFCLASS32, ELFCLASS64};
 use goblin::elf::section_header::SHT_DYNSYM;
 use goblin::elf::sym::{STT_FUNC, sym32, sym64};
 
+use crate::error::Result;
 use crate::ebpf::symtab::elf::symbol_table::{SECTION_TYPE_DYN_SYM, SECTION_TYPE_SYM, SectionLinkIndex, SymbolIndex};
 use crate::ebpf::symtab::elf::symbol_table::Name;
 
@@ -18,7 +19,8 @@ pub struct MappedElfFile {
     pub sections: Vec<SectionHeader>,
     pub progs: Vec<ProgramHeader>,
 
-    fpath: PathBuf,
+    pub(crate) fpath: PathBuf,
+    pub(crate) err:   Option<Err>,
     fd: Option<File>,
 
     string_cache: std::collections::HashMap<usize, String>,
@@ -33,6 +35,7 @@ impl MappedElfFile {
     pub fn new(fpath: PathBuf) -> io::Result<Self> {
         let mut res = Self {
             fpath,
+            err: None,
             fd: None,
             file_header: Default::default(),
             sections: Vec::new(),
@@ -52,7 +55,7 @@ impl MappedElfFile {
         Ok(res)
     }
 
-    fn section(&self, name: &str) -> Option<&SectionHeader> {
+    pub(crate) fn section(&self, name: &str) -> Option<&SectionHeader> {
         self.sections.iter()
             .find(|s| s.name() == Some(name))
     }
@@ -62,20 +65,20 @@ impl MappedElfFile {
             .find(|s| s.sh_type == typ)
     }
 
-    fn ensure_open(&mut self) -> io::Result<()> {
+    fn ensure_open(&mut self) -> Result<()> {
         if self.fd.is_none() {
             self.fd = Some(File::open(&self.fpath)?);
         }
         Ok(())
     }
 
-    fn open(&mut self) -> Result<(), io::Error> {
+    fn open(&mut self) -> Result<()> {
         let fd = File::open(&self.fpath)?;
         self.fd = Some(fd);
         Ok(())
     }
 
-    fn section_data(&mut self, s: &SectionHeader) -> Result<Vec<u8>, std::io::Error> {
+    pub(crate) fn section_data(&mut self, s: &SectionHeader) -> Result<Vec<u8>> {
         self.ensure_open()?;
 
         let mut file = File::open("your_file_name_here")?; // Replace "your_file_name_here" with your file name
@@ -86,7 +89,7 @@ impl MappedElfFile {
         Ok(res)
     }
 
-    fn get_string(&mut self, start: usize) -> Result<(String, bool), io::Error> {
+    pub(crate) fn get_string(&mut self, start: usize) -> Result<(String, bool)> {
         self.ensure_open()?;
         if let Some(s) = self.string_cache.get(&start).cloned() {
             return Ok((s, true));
@@ -112,7 +115,7 @@ impl MappedElfFile {
         (String::new(), false)
     }
 
-    fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         self.fd = None;
         self.string_cache.clear();
         self.sections.clear();
