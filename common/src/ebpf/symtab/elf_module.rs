@@ -1,18 +1,14 @@
 use std::error::Error;
 use std::fs;
-use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use demangle::Demangle;
 use crate::ebpf::metrics::symtab::SymtabMetrics;
+use crate::ebpf::symtab::elf::buildid::BuildIdentified;
 use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
-use crate::ebpf::symtab::stat_linux::stat_from_file_info;
+use crate::ebpf::symtab::stat::stat_from_file_info;
 use crate::error::Error::NotFound;
 
-mod elf;
-mod metrics;
-
-struct ElfTable {
+pub struct ElfTable {
     fs: String,
     elf_file_path: String,
     table: Box<dyn SymbolNameResolver>,
@@ -24,15 +20,24 @@ struct ElfTable {
     proc_map: ProcMap,
 }
 
-struct ElfTableOptions {
-    elf_cache: ElfCache,
-    metrics: SymtabMetrics,
-    symbol_options: SymbolOptions,
+pub struct ElfTableOptions {
+    pub(crate) elf_cache: ElfCache,
+    pub(crate) metrics: SymtabMetrics,
+    pub(crate) symbol_options: SymbolOptions,
 }
 
-struct SymbolOptions {
+pub struct SymbolOptions {
     go_table_fallback: bool,
     python_full_file_path: bool
+}
+
+impl Default for SymbolOptions {
+    fn default() -> Self {
+        Self {
+            go_table_fallback: false,
+            python_full_file_path: true
+        }
+    }
 }
 
 struct ElfCache;
@@ -76,7 +81,6 @@ impl ElfTable {
                 return;
             }
         };
-        // todo do not close if it is the selected elf
 
         if !self.find_base(&me) {
             self.err = Err(NotFound(""));
@@ -124,7 +128,6 @@ impl ElfTable {
                     return;
                 }
             };
-            // todo do not close if it is the selected elf
 
             let symbols_result = self.create_symbol_table(&debug_me);
             let symbols = match symbols_result {
@@ -155,17 +158,40 @@ impl ElfTable {
         }
     }
 
-    fn resolve(&mut self, pc: u64) -> String {
-        // TODO: implement resolve function
-        String::new()
+    fn resolve(&mut self, mut pc: u64) -> String {
+        if !self.loaded {
+            self.load();
+        }
+        if let Some(_err) = &self.err { return String::new(); }
+
+        pc -= self.base;
+        let res = self.table.resolve(pc);
+
+        if !res.is_empty() {
+            return res;
+        } else if !self.table.is_dead() {
+            return String::new();
+        } else if !self.loaded_cached {
+            self.err = Some(String::from("Table is dead"));
+            return String::new();
+        }
+
+        self.table = Box::new(NoopSymbolNameResolver {});
+        self.loaded = false;
+        self.loaded_cached = false;
+        self.load();
+
+        if let Some(_err) = &self.err { return String::new(); }
+        self.table.resolve(pc)
     }
+
 }
 
 impl ElfTableOptions {
     fn ensure_defaults(self) -> Self {
         let mut new_self = self;
         if new_self.symbol_options.is_none() {
-            new_self.symbol_options = Some(DefaultSymbolOptions {});
+            new_self.symbol_options = Some(SymbolOptions::default());
         }
         if new_self.metrics.is_none() {
             panic!("metrics is nil");
@@ -175,11 +201,10 @@ impl ElfTableOptions {
 }
 
 impl SymbolOptions {
-    fn new(go_table_fallback: bool, python_full_file_path: bool, demangle_options: Vec<demangle::Option>) -> Self {
+    fn new(go_table_fallback: bool, python_full_file_path: bool) -> Self {
         Self {
             go_table_fallback,
-            python_full_file_path,
-            demangle_options,
+            python_full_file_path
         }
     }
 }
@@ -190,16 +215,8 @@ impl SymbolNameResolver for NoopSymbolNameResolver {
     fn resolve(&self, _pc: u64) -> String {
         String::new()
     }
-
     fn is_dead(&self) -> bool {
         false
     }
-
-    fn cleanup(&mut self) {
-        // no cleanup needed
-    }
-}
-
-fn main() {
-    // You can implement the main function here to test the ElfTable functionality
+    fn cleanup(&mut self) {}
 }

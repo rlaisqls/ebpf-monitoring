@@ -38,8 +38,6 @@ enum {
     PY_ERROR_NAME = 12,
     PY_ERROR_FRAME_OWNER = 13,
     PY_ERROR_FRAME_OWNER_INVALID = 14,
-
-
 };
 
 

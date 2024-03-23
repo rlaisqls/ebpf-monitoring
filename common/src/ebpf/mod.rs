@@ -1,8 +1,7 @@
 pub mod metrics;
 pub mod symtab;
 pub mod sd;
-mod cpuonline;
-mod dwarfdump;
-mod session;
-mod pprof;
-mod pprof;
+pub mod cpuonline;
+pub mod dwarfdump;
+pub mod session;
+pub mod pprof;

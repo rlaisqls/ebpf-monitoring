@@ -5,7 +5,7 @@ use crate::ebpf::symtab::table::{Symbol, SymbolTab};
 
 const KALLSYMS_MODULE: &str = "kernel";
 
-fn new_kallsyms() -> io::Result<SymbolTab> {
+pub fn new_kallsyms() -> io::Result<SymbolTab> {
     new_kallsyms_from_file("/proc/kallsyms")
 }
 

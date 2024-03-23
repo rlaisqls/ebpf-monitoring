@@ -16,10 +16,9 @@ const LABEL_SERVICE_NAME_K8S: &str = "__meta_kubernetes_pod_annotation_pyroscope
 const METRIC_VALUE: &str = "process_cpu";
 const RESERVED_LABEL_PREFIX: &str = "__";
 
-
 type DiscoveryTarget = HashMap<String, String>;
 
-struct Target {
+pub struct Target {
     labels: Labels,
     service_name: String,
     fingerprint: u64,
@@ -104,7 +103,7 @@ fn infer_service_name(target: DiscoveryTarget) -> String {
     "unspecified".to_string()
 }
 
-struct TargetFinder {
+pub struct TargetFinder {
     cid2target: Arc<Mutex<HashMap<String, Arc<Target>>>>,
     pid2target: Arc<Mutex<HashMap<u32, Arc<Target>>>>,
 
@@ -133,7 +132,7 @@ impl TargetFinder {
         }
     }
 
-    fn find_target(&self, pid: u32) -> Option<Arc<Target>> {
+    pub fn find_target(&self, pid: u32) -> Option<Arc<Target>> {
         let pid2target = self.pid2target.lock().unwrap();
         if let Some(target) = pid2target.get(&pid) {
             return Some(target.clone());

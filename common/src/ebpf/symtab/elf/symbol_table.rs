@@ -20,11 +20,9 @@ impl Name {
     pub(crate) fn new(name_index: u32, link_index: SectionLinkIndex) -> Self {
         Name(name_index | (link_index) << 31)
     }
-
     fn name_index(&self) -> u32 {
         self.0 & 0x7FFFFFFF
     }
-
     fn link_index(&self) -> SectionLinkIndex {
         SectionLinkIndex((self.0 >> 31) as u8)
     }

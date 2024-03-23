@@ -43,7 +43,7 @@ impl SymTab {
 
 #[derive(Debug)]
 pub struct SymbolTab {
-    symbols: Vec<Symbol>,
+    pub(crate) symbols: Vec<Symbol>,
     base: u64,
 }
 
@@ -55,7 +55,7 @@ pub struct Symbol {
 }
 
 impl SymbolTab {
-    pub(crate) fn new(symbols: Vec<Symbol>) -> Self {
+    pub(crate) fn new(symbols: Option<_>) -> Self {
         SymbolTab {
             symbols,
             base: 0,

@@ -6,7 +6,7 @@ use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
 use crate::error::Error::{InvalidData, NotFound};
 
 #[derive(Debug)]
-struct BuildID {
+pub struct BuildID {
     id: String,
     typ: String,
 }

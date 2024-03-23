@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::hash::Hasher;
 use std::io::{self, Write};
-use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use pprof::protos::{Function, Line, Location, Mapping, Profile, Sample, ValueType};
 use xxhash_rust::xxh3::xxh3_64;
 
-use byteorder::{ByteOrder, LittleEndian};
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use pprof::protos::{Location, Profile, Mapping, ValueType, Sample, Function, Line};
+use crate::common::labels::Labels;
+use crate::error::Error::InvalidData;
 
 struct ProfileBuilders {
     builders: HashMap<u64, ProfileBuilder>,
@@ -48,17 +49,6 @@ impl ProfileBuilder {
             functions: HashMap::new(),
             sample_hash_to_sample: HashMap::new(),
             profile: Profile {
-                mapping: vec![Mapping { id: 1 }],
-                sample_type: vec![ValueType {
-                    ty: *strings.get("cpu").unwrap() as i64,
-                    unit: *strings.get("nanoseconds").unwrap() as i64,
-                    ..Default::default()
-                }],
-                period: 1_000_000_000 / sample_rate,
-                period_type: ValueType {
-                    type_: "cpu".to_string(),
-                    unit: "nanoseconds".to_string(),
-                },
                 time_nanos: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
@@ -80,7 +70,7 @@ impl ProfileBuilder {
 
         for s in stacktrace {
             let loc = self.add_location(&s);
-            sample.location.push(loc.clone());
+            sample.location_id.push(loc.id);
         }
 
         self.profile.sample.push(sample);
@@ -105,11 +95,12 @@ impl ProfileBuilder {
         }
 
         let mut sample_location = vec![&Location::default(); self.tmp_locations.len()];
-        sample_location.clone_from_slice(&self.tmp_locations);
+        sample_location.clone_from_slice(&self.tmp_locations.iter().collect());
+
+        // expected `&[&Location]`, but found `&Vec<Location>`
 
         let sample = Sample {
-            location_id: vec![],
-            location: sample_location,
+            location_id: sample_location.iter().map(|l| l.id).collect(),
             value: vec![scaled_value],
             label: Default::default(),
             unknown_fields: Default::default(),
@@ -128,10 +119,11 @@ impl ProfileBuilder {
         let id = (self.profile.location.len() + 1) as u64;
         let loc = Location {
             id,
-            mapping: self.profile.mapping[0].clone(),
+            mapping_id: self.profile.mapping[0].clone().id,
             line: vec![Line {
-                function: self.add_function(function),
-            }],
+                function_id: self.add_function(function).id,
+                ..Default::default()
+            }].into(),
             ..Default::default()
         };
 
@@ -149,7 +141,12 @@ impl ProfileBuilder {
         let id = (self.profile.function.len() + 1) as u64;
         let func = Function {
             id,
-            name: function.to_string(),
+            name: function.to_string().parse().unwrap(),
+            system_name: 0,
+            filename: 0,
+            start_line: 0,
+            unknown_fields: Default::default(),
+            cached_size: Default::default(),
         };
 
         self.functions.insert(function.to_string(), func.clone());
@@ -162,17 +159,6 @@ impl ProfileBuilder {
         let mut gz_encoder = GzEncoder::new(dst, Compression::default());
         self.profile
             .encode(&mut gz_encoder)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("ebpf profile encode {}", e)))
-    }
-}
-
-struct Labels {
-    // Define label structure here
-}
-
-impl Default for Labels {
-    fn default() -> Self {
-        // Define default label values here
-        Self {}
+            .map_err(|e| Err(InvalidData(format!("ebpf profile encode {}", e))));
     }
 }

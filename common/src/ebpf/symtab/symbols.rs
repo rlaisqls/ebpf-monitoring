@@ -1,11 +1,14 @@
-use log::error;
+use log::{debug, error};
 use crate::ebpf::metrics;
 use crate::ebpf::symtab::elf_cache::{ElfCache, ElfCacheDebugInfo};
-use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo};
+use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo, GCacheOptions};
 use crate::ebpf::metrics::symtab::SymtabMetrics;
+use crate::ebpf::symtab::elf_module::{ElfTableOptions, SymbolOptions};
+use crate::ebpf::symtab::proc::{ProcTable, ProcTableDebugInfo, ProcTableOptions};
 use crate::ebpf::symtab::table::SymbolTab;
+use crate::ebpf::symtab::kallsyms::new_kallsyms;
 
-type PidKey = u32;
+pub type PidKey = u32;
 
 // SymbolCache is responsible for resolving PC address to Symbol
 // maintaining a pid -> ProcTable cache
@@ -60,7 +63,6 @@ impl SymbolCache {
 
         debug!(self.logger, "NewProcTable"; "pid" => pid);
         let fresh = ProcTable::new(
-            self.logger.clone(),
             ProcTableOptions {
                 pid: pid as i32,
                 elf_table_options: ElfTableOptions {
@@ -75,21 +77,21 @@ impl SymbolCache {
         fresh
     }
 
-    pub fn get_kallsyms(&mut self) -> SymbolTab {
+    pub fn get_kallsyms(&mut self) -> &SymbolTab {
         if let Some(kallsyms) = &self.kallsyms {
             return kallsyms.clone();
         }
-        self.init_kallsyms()
+        &self.init_kallsyms()
     }
 
     fn init_kallsyms(&mut self) -> SymbolTab {
-        let mut kallsyms = NewKallsyms().unwrap_or_else(|err| {
+        let mut kallsyms = new_kallsyms().unwrap_or_else(|err| {
             error!(self.logger, "kallsyms init fail"; "err" => err);
             SymbolTab::new(None)
         });
 
         if kallsyms.symbols.is_empty() {
-            let _ = error!(self.logger, "kallsyms is empty. check your permissions kptr_restrict==0 && sysctl_perf_event_paranoid <= 1 or kptr_restrict==1 &&  CAP_SYSLOG");
+            let _ = error!("kallsyms is empty. check your permissions kptr_restrict==0 && sysctl_perf_event_paranoid <= 1 or kptr_restrict==1 &&  CAP_SYSLOG");
         }
 
         self.kallsyms = Some(kallsyms.clone());

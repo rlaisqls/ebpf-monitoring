@@ -1,5 +1,9 @@
 use std::sync::Mutex;
-use crate::ebpf::symtab::gcache::GCache;
+use gimli::DebugInfo;
+use crate::ebpf::symtab::elf::buildid::BuildID;
+use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
+use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo, GCacheOptions, SymbolNameResolver};
+use crate::ebpf::symtab::stat::Stat;
 
 pub struct ElfCache {
     build_id_cache: Mutex<GCache<BuildID, SymbolNameResolver>>,
@@ -8,7 +12,7 @@ pub struct ElfCache {
 
 impl ElfCache {
     pub fn new(build_id_cache_options: GCacheOptions, same_file_cache_options: GCacheOptions) -> Result<Self, Box<dyn std::error::Error>> {
-        let build_id_cache = Mutex::new(GCache::<elf::BuildID, SymbolNameResolver>::new(build_id_cache_options)?);
+        let build_id_cache = Mutex::new(GCache::<BuildID, SymbolNameResolver>::new(build_id_cache_options)?);
         let same_file_cache = Mutex::new(GCache::<Stat, SymbolNameResolver>::new(same_file_cache_options)?);
 
         Ok(Self { build_id_cache, same_file_cache })
@@ -23,7 +27,7 @@ impl ElfCache {
         Some(res)
     }
 
-    pub fn cache_by_build_id(&self, build_id: elf::BuildID, v: SymbolNameResolver) {
+    pub fn cache_by_build_id(&self, build_id: BuildID, v: SymbolNameResolver) {
         if let Some(v) = v {
             self.build_id_cache.lock().unwrap().cache(build_id, v);
         }
@@ -77,12 +81,12 @@ impl ElfCache {
 }
 
 pub struct ElfCacheDebugInfo {
-    build_id_cache: GCacheDebugInfo<elf::SymTabDebugInfo>,
-    same_file_cache: GCacheDebugInfo<elf::SymTabDebugInfo>,
+    build_id_cache: GCacheDebugInfo<SymTabDebugInfo>,
+    same_file_cache: GCacheDebugInfo<SymTabDebugInfo>,
 }
 
 impl ElfCacheDebugInfo {
-    pub fn new(build_id_cache: GCacheDebugInfo<elf::SymTabDebugInfo>, same_file_cache: GCacheDebugInfo<elf::SymTabDebugInfo>) -> Self {
+    pub fn new(build_id_cache: GCacheDebugInfo<SymTabDebugInfo>, same_file_cache: GCacheDebugInfo<SymTabDebugInfo>) -> Self {
         Self { build_id_cache, same_file_cache }
     }
 }

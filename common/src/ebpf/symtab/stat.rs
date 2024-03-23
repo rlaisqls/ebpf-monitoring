@@ -24,6 +24,7 @@ pub fn stat_from_file_info(file_info: &fs::Metadata) -> Stat {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
 pub struct Stat {
     dev: u64,
     inode: u64,
