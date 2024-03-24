@@ -22,6 +22,8 @@ object = "0.34.0"
 gimli = "0.28.1"
 flate2 = "1.0.28"
 pprof = { version = "0.13.0", features = ["protobuf-codec"] }
+nix = "0.26.4"
+perf-event = "0.4.8"
 
 [dependencies.xxhash-rust]
 version = "0.8.5"
@@ -29,3 +31,4 @@ features = ["xxh3", "const_xxh3", "xxh64"]
 
 [build-dependencies]
 tonic-build = "0.11.0"
+libbpf-cargo = "0.22.1"

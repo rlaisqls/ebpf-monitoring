@@ -55,7 +55,7 @@ pub struct Symbol {
 }
 
 impl SymbolTab {
-    pub(crate) fn new(symbols: Option<_>) -> Self {
+    pub(crate) fn new(symbols: Vec<Symbol>) -> Self {
         SymbolTab {
             symbols,
             base: 0,

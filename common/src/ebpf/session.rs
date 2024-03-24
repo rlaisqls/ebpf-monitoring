@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::{Arc, Mutex}, thread};
 use std::collections::HashSet;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
+use anyhow::bail;
 use crate::ebpf::cpuonline;
 
 use crate::error::Result;
@@ -11,6 +12,7 @@ use crate::ebpf::symtab::elf_cache::ElfCacheDebugInfo;
 use crate::ebpf::symtab::gcache::GCacheDebugInfo;
 use crate::ebpf::symtab::proc::ProcTableDebugInfo;
 use crate::ebpf::symtab::symbols::{CacheOptions, PidKey, SymbolCache};
+use crate::error::Error::InvalidData;
 
 type CollectProfilesCallback =
 Box<dyn Fn(Target, Vec<String>, u64, u32, bool) + Send + 'static>;
@@ -123,10 +125,7 @@ impl Session {
 
     fn start(&mut self) -> Result<()> {
         let _guard = self.mutex.lock()?;
-
-        if let Err(err) = rlimit::remove_memlock() {
-            return Err(err);
-        }
+        bump_memlock_rlimit().expect(&*"Failed to increase rlimit");
 
         let mut opts = ebpf::CollectionOptions::new();
         opts.programs.log_disabled = true;
@@ -135,8 +134,6 @@ impl Session {
             self.stop_locked();
             return Err(err.into());
         }
-
-        btf::flush_kernel_spec(); // save some memory
 
         let events_reader = perf::Reader::new(&self.bpf.profile_maps.events, 4 * os::getpagesize())?;
         self.perf_events = attach_perf_events(self.options.sample_rate, self.bpf.do_perf_event)?;
@@ -375,6 +372,18 @@ impl Session {
         println!("clearStacksMap deleted known stacks count: {} unsuccessful: {}", cnt, errs);
         Ok(())
     }
+}
+
+fn bump_memlock_rlimit() -> Result<()> {
+    let rlimit = libc::rlimit {
+        rlim_cur: 128 << 20,
+        rlim_max: 128 << 20,
+    };
+
+    if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlimit) } != 0 {
+        return Err(InvalidData("Failed to increase rlimit".to_string()));
+    }
+    Ok(())
 }
 
 fn attach_perf_events(sample_rate: i32, prog: &ebpf::Program) -> Result<Vec<PerfEvent>> {

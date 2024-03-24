@@ -143,11 +143,6 @@ impl Resource for SymbolNameResolver {
     }
 }
 
-impl Default for SymbolNameResolver {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 pub struct GCacheDebugInfo<T> {
     lru_size: usize,

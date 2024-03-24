@@ -18,7 +18,7 @@ impl ElfCache {
         Ok(Self { build_id_cache, same_file_cache })
     }
 
-    pub fn get_symbols_by_build_id(&self, build_id: elf::BuildID) -> Option<SymbolNameResolver> {
+    pub fn get_symbols_by_build_id(&self, build_id: BuildID) -> Option<SymbolNameResolver> {
         let res = self.build_id_cache.lock().unwrap().get(build_id)?;
         if res.is_dead() {
             self.build_id_cache.lock().unwrap().remove(build_id);
