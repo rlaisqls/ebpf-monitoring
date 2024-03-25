@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .source(SRC)
         .clang_args([
             OsStr::new("-I"),
-            Path::new("src/bpf/vmlinux").join(arch).as_os_str(),
+            Path::new("../vmlinux").join(arch).as_os_str(),
         ])
         .build_and_generate(&out)
         .unwrap();
