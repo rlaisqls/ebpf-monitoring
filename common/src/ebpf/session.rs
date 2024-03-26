@@ -1,8 +1,17 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}, thread};
+use std::{collections::HashMap, default, os, sync::{Arc, Mutex}, thread};
 use std::collections::HashSet;
-use std::ops::Deref;
+use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Sender, Receiver, channel};
 use anyhow::bail;
+use byteorder::ReadBytesExt;
+use gimli::LittleEndian;
+use gimli::Vendor::Default;
+use libbpf_rs::libbpf_sys::BPF_MAP_LOOKUP_AND_DELETE_BATCH;
+use libbpf_rs::Link;
+use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
+use log::{debug, error};
+use nix::unistd;
 use crate::ebpf::cpuonline;
 
 use crate::error::Result;
@@ -13,6 +22,14 @@ use crate::ebpf::symtab::gcache::GCacheDebugInfo;
 use crate::ebpf::symtab::proc::ProcTableDebugInfo;
 use crate::ebpf::symtab::symbols::{CacheOptions, PidKey, SymbolCache};
 use crate::error::Error::InvalidData;
+
+mod profile {
+    include!("../profile.skel.rs");
+}
+use profile::*;
+use crate::ebpf::perf_event::PerfEvent;
+use crate::ebpf::sync::PidOp;
+use crate::ebpf::sync::PidOp::Dead;
 
 type CollectProfilesCallback =
 Box<dyn Fn(Target, Vec<String>, u64, u32, bool) + Send + 'static>;
@@ -68,22 +85,19 @@ struct ProcInfoLite {
     typ: ProfilingType,
 }
 
-struct Session {
+struct Session<'a> {
     target_finder: Arc<TargetFinder>,
     sym_cache: Arc<Mutex<SymbolCache>>,
-    bpf: ProfileObjects,
-    events_reader: PerfReader,
-    pid_info_requests: Vec<u32>,
-    dead_pid_events: Vec<u32>,
+    bpf: ProfileSkel<'a>,
+    events_reader: Receiver<u32>,
+    pid_info_requests: Receiver<u32>,
+    dead_pid_events: Receiver<u32>,
     options: SessionOptions,
     round_number: u32,
     mutex: Mutex<()>, // Add your own mutex type here
     started: bool,
-    kprobes: Vec<()>, // Add your own kprobe type here
-    pyperf: Option<()>, // Add your own PyPerf type here
-    pyperf_events: Vec<()>, // Add your own PyPerfEvent type here
-    pyperf_bpf: Option<()>, // Add your own PyPerfBpf type here
-    pyperf_error: Option<()>, // Add your own PyPerfError type here
+    kprobes: Vec<Link>,
+
     pids: Pids,
     pid_exec_requests: Vec<u32>,
     perf_events: ()
@@ -102,41 +116,29 @@ impl Session {
             session_options.cache_options,
             session_options.metrics.symtab.clone()
         )?;
+
+        let mut skel_builder = ProfileSkelBuilder::default();
+        bump_memlock_rlimit()?;
+        let mut open_skel = skel_builder.open()?;
+
         Ok(Self {
             target_finder,
             sym_cache: Arc::new(Mutex::new(sym_cache)),
-            bpf: ProfileObjects::default(),
+            bpf: open_skel,
             events_reader: PerfReader::default(),
-            pid_info_requests: Vec::new(),
-            dead_pid_events: Vec::new(),
-            options: session_options,
-            round_number: 0,
-            mutex: Mutex::new(()),
-            started: false,
-            kprobes: Vec::new(),
-            pyperf: None,
-            pyperf_events: Vec::new(),
-            pyperf_bpf: None,
-            pyperf_error: None,
-            pids: Pids::default(),
-            pid_exec_requests: Vec::new(),
+            ..Default::default()
         })
     }
 
     fn start(&mut self) -> Result<()> {
+
         let _guard = self.mutex.lock()?;
         bump_memlock_rlimit().expect(&*"Failed to increase rlimit");
 
-        let mut opts = ebpf::CollectionOptions::new();
-        opts.programs.log_disabled = true;
-
-        if let Err(err) = pyrobpf::load_profile_objects(&mut self.bpf, &opts) {
-            self.stop_locked();
-            return Err(err.into());
-        }
-
-        let events_reader = perf::Reader::new(&self.bpf.profile_maps.events, 4 * os::getpagesize())?;
-        self.perf_events = attach_perf_events(self.options.sample_rate, self.bpf.do_perf_event)?;
+        let mut skel = self.bpf.load()?;
+        skel.attach()?;
+        let events_reader = perf::Reader::new(&self.bpf.maps_mut().events(), 4 * std::os::page_size)?;
+        self.perf_events = attach_perf_events(self.options.sample_rate, self.bpf.links.do_perf_event)?;
 
         if let Err(err) = self.link_kprobes() {
             self.stop_locked();
@@ -144,28 +146,22 @@ impl Session {
         }
 
         self.events_reader = Some(events_reader);
-        let pid_info_requests = Arc::new(Mutex::new(Vec::with_capacity(1024)));
-        let pid_exec_requests = Arc::new(Mutex::new(Vec::with_capacity(1024)));
-        let dead_pid_events = Arc::new(Mutex::new(Vec::with_capacity(1024)));
-        self.pid_info_requests = Some(pid_info_requests.clone());
-        self.pid_exec_requests = Some(pid_exec_requests.clone());
-        self.dead_pid_events = Some(dead_pid_events.clone());
+
+        let (pid_info_request_tx, pid_info_request_rx) = channel::<u32>();
+        let (pid_exec_request_tx, pid_exec_request_rx) = channel::<u32>();
+        let (dead_pid_events_tx, dead_pid_events_rx) = channel::<u32>();
+        self.pid_info_requests = pid_info_request_rx;
+        self.pid_exec_requests = pid_exec_request_rx;
+        self.dead_pid_events = dead_pid_events_rx;
 
         self.started = true;
-        let wg = Arc::new(AtomicBool::new(true));
-        let wg_clone = wg.clone();
-
-        let events_reader_clone = self.events_reader.clone().unwrap();
-        let pid_info_requests_clone = pid_info_requests.deref().clone();
-        let pid_exec_requests_clone = pid_exec_requests.deref().clone();
-        let dead_pid_events_clone = dead_pid_events.deref().clone();
         let mut threads = Vec::with_capacity(4);
 
         for f in vec![
-            move || Session::read_events(events_reader_clone, pid_info_requests_clone, pid_exec_requests_clone, dead_pid_events_clone),
-            move || Session::process_pid_info_requests(pid_info_requests_clone, wg_clone.clone()),
-            move || Session::process_dead_pids_events(dead_pid_events_clone, wg_clone.clone()),
-            move || Session::process_pid_exec_requests(pid_exec_requests_clone, wg_clone.clone()),
+            move || Session::read_events(events_reader, pid_info_request_tx, pid_exec_request_tx, dead_pid_events_tx),
+            move || Session::process_pid_info_requests(),
+            move || Session::process_dead_pids_events(),
+            move || Session::process_pid_exec_requests(),
         ] {
             let wg_clone = wg.clone();
             let thread = thread::spawn(move || {
@@ -178,8 +174,13 @@ impl Session {
         for thread in threads {
             thread.join().unwrap();
         }
-
         Ok(())
+    }
+
+    fn stop_locked(&mut self) {
+        drop(self.pid_info_requests.take());
+        drop(self.dead_pid_events.take());
+        drop(self.pid_exec_requests.take());
     }
 
     fn stop(&self) {
@@ -196,9 +197,7 @@ impl Session {
 
     fn update_targets(&mut self, args: TargetsOptions) {
         self.target_finder.update(args);
-
         let _guard = self.mutex.lock().unwrap();
-
         for pid in self.pids.unknown.iter() {
             let target = self.target_finder.find_target(*pid);
             if let Some(target) = target {
@@ -235,7 +234,6 @@ impl Session {
     fn collect_regular_profile(&mut self, cb: CollectProfilesCallback) -> Result<(), String> {
         let mut sb = StackBuilder::new();
         let mut known_stacks = HashSet::new();
-
         let (keys, values, batch) = self.get_counts_map_values()?;
 
         for (i, ck) in keys.iter().enumerate() {
@@ -279,11 +277,146 @@ impl Session {
         Ok(())
     }
 
+    fn read_events(
+        &self,
+        events: perf::Reader,
+        pid_config_request: Sender<u32>,
+        pid_exec_request: Sender<u32>,
+        dead_pids_events: Sender<u32>,
+    ) {
+        for record in events {
+            match record {
+                Ok(record) => {
+                    if record.lost_samples != 0 {
+                        error!(
+                            "perf event ring buffer full, dropped samples: {}",
+                            record.lost_samples
+                        );
+                    }
 
-    // Define getCountsMapValues function
+                    if let Some(raw_sample) = record.raw_sample {
+                        if raw_sample.len() < 8 {
+                            error!("perf event record too small: {}", raw_sample.len());
+                            continue;
+                        }
+                        let mut cursor = Cursor::new(raw_sample);
+                        let op = cursor.read_u32::<LittleEndian>().unwrap();
+                        let pid = cursor.read_u32::<LittleEndian>().unwrap();
+
+                        if op == PidOp::RequestExecProcessInfo as u32 {
+                            match pid_config_request.send(pid) {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    error!("pid info request queue full, dropping request: {}", pid);
+                                    // Implement fallback at reset time if needed
+                                }
+                            }
+                        } else if op == PidOp::Dead as u32 {
+                            match dead_pids_events.send(pid) {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    error!("dead pid info queue full, dropping event: {}", pid);
+                                }
+                            }
+                        } else if op == PidOp::RequestExecProcessInfo as u32 {
+                            match pid_exec_request.send(pid) {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    error!("pid exec request queue full, dropping event: {}", pid);
+                                }
+                            }
+                        } else {
+                            error!("unknown perf event record: op={}, pid={}", op, pid);
+                        }
+                    }
+                }
+                Err(err) => {
+                    error!("reading from perf event reader: {}", err);
+                }
+            }
+        }
+    }
+
+    fn process_pid_info_requests(&self) {
+        for pid in self.pid_info_requests {
+            let target = self.target_finder.find_target(pid);
+            debug!("pid info request: pid={}, target={:?}", pid, target);
+
+            let mut lock = self.mutex.lock().unwrap();
+            let already_dead = lock.pids.dead.contains(&pid);
+            if already_dead {
+                debug!("pid info request for dead pid: {}", pid);
+                continue;
+            }
+
+            if target.is_none() {
+                self.save_unknown_pid_locked(pid);
+            } else {
+                self.start_profiling_locked(pid, target.unwrap());
+            }
+        }
+    }
+    
+    fn process_dead_pids_events(&mut self) {
+        for pid in self.dead_pid_events {
+            debug!(self.logger, "pid dead"; "pid" => pid);
+            {
+                let mut data = self.mutex.lock().unwrap();
+                self.pids.dead.insert(pid, Default::default());
+            }
+        }
+    }
+
+    fn process_pid_exec_requests(&self, requests: Receiver<u32>) {
+        for pid in requests {
+            let target = self.target_finder.find_target(pid);
+            debug!(self.logger, "pid exec request"; "pid" => pid);
+            {
+                let mut data = self.mutex.lock().unwrap();
+                if data.pids_dead.contains(&pid) {
+                    debug!(self.logger, "pid exec request for dead pid"; "pid" => pid);
+                    continue;
+                }
+                if target.is_none() {
+                    self.save_unknown_pid_locked(pid, &mut data);
+                } else {
+                    self.start_profiling_locked(pid, target.unwrap(), &mut data);
+                }
+            }
+        }
+    }
+
+    fn link_kprobes(&mut self) -> Result<(), String> {
+        let arch_sys = if cfg!(target_arch = "x86_64") {
+            "__x64_"
+        } else {
+            "__arm64_"
+        };
+        let hooks = [
+            ("disassociate_ctty", &self.bpf.progs().disassociate_ctty(), true),
+            (arch_sys, &self.bpf.progs().exec(), false),
+            (arch_sys, &self.bpf.progs().execveat(), false),
+        ];
+        for (kprobe, mut prog, required) in &hooks {
+            match prog.attach_kprobe(false, prog.name()) {
+                Ok(kp) => self.kprobes.push(kp),
+                Err(err) => {
+                    if *required {
+                        return Err(format!("link kprobe {}: {}", kprobe, err));
+                    }
+                    error!(self.logger, "link kprobe"; "kprobe" => kprobe, "err" => err);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn get_counts_map_values(&mut self) -> Result<(Vec<ProfileSampleKey>, Vec<u32>, bool), String> {
         // Try batch first
-        let m = &self.bpf.profile_maps.counts;
+        let m = &self.bpf.maps().counts();
+        m.update_batch()
+
+        BPF_MAP_LOOKUP_AND_DELETE_BATCH
         let map_size = m.max_entries();
         let mut keys: Vec<ProfileSampleKey> = Vec::with_capacity(map_size);
         let mut values: Vec<u32> = Vec::with_capacity(map_size);
@@ -317,7 +450,6 @@ impl Session {
         Ok((result_keys, result_values, false))
     }
 
-    // Define clearCountsMap function
     fn clear_counts_map(&mut self, keys: &[ProfileSampleKey], batch: bool) -> Result<(), String> {
         if keys.is_empty() {
             return Ok(());
@@ -326,7 +458,7 @@ impl Session {
             // do nothing, already deleted with GetValueAndDeleteBatch in getCountsMapValues
             return Ok(());
         }
-        let m = &self.bpf.profile_maps.counts;
+        let m = &self.bpf.maps().counts();
         for k in keys {
             m.delete(k)?;
         }
@@ -336,7 +468,6 @@ impl Session {
         Ok(())
     }
 
-    // Define clearStacksMap function
     fn clear_stacks_map(&mut self, known_keys: &HashMap<u32, bool>) -> Result<(), String> {
         let m = &self.bpf.stacks;
         let mut cnt = 0;
@@ -357,7 +488,6 @@ impl Session {
                 }
             }
 
-            // Log debug message
             println!("clearStacksMap deleted all stacks count: {} unsuccessful: {}", cnt, errs);
             return Ok(());
         }
@@ -391,7 +521,7 @@ fn attach_perf_events(sample_rate: i32, prog: &ebpf::Program) -> Result<Vec<Perf
     let mut perf_events = Vec::new();
 
     for cpu in cpus {
-        let pe = PerfEvent::new(cpu as usize, sample_rate)?;
+        let pe = PerfEvent::new(cpu as usize as i32, sample_rate)?;
         perf_events.push(pe);
 
         if let Err(err) = pe.attach_perf_event(prog) {
@@ -441,4 +571,37 @@ impl StackResolveStats {
         self.unknown_symbols += other.unknown_symbols;
         self.unknown_modules += other.unknown_modules;
     }
+}
+
+#[test]
+fn ring_buf_epoll_wakeup() {
+    let RingBufTest {
+        mut ring_buf,
+        _bpf,
+        regs: _,
+    } = RingBufTest::new();
+
+    let epoll_fd = epoll::create(false).unwrap();
+    epoll::ctl(
+        epoll_fd,
+        epoll::ControlOptions::EPOLL_CTL_ADD,
+        ring_buf.as_raw_fd(),
+        // The use of EPOLLET is intentional. Without it, level-triggering would result in
+        // more notifications, and would mask the underlying bug this test reproduced when
+        // the synchronization logic in the RingBuf mirrored that of libbpf. Also, tokio's
+        // AsyncFd always uses this flag (as demonstrated in the subsequent test).
+        epoll::Event::new(epoll::Events::EPOLLIN | epoll::Events::EPOLLET, 0),
+    )
+        .unwrap();
+    let mut epoll_event_buf = [epoll::Event::new(epoll::Events::EPOLLIN, 0); 1];
+    let mut total_events: u64 = 0;
+    let writer = WriterThread::spawn();
+    while total_events < WriterThread::NUM_MESSAGES {
+        epoll::wait(epoll_fd, -1, &mut epoll_event_buf).unwrap();
+        while let Some(read) = ring_buf.next() {
+            assert_eq!(read.len(), 8);
+            total_events += 1;
+        }
+    }
+    writer.join();
 }

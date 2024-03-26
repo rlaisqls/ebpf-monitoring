@@ -4,8 +4,8 @@ use std::os::unix::io::RawFd;
 
 use perf_event::hooks::sys::bindings::{__u64, PERF_COUNT_SW_CPU_CLOCK, perf_event_attr, PERF_FLAG_FD_CLOEXEC, PERF_TYPE_SOFTWARE};
 use perf_event::hooks::sys::perf_event_open;
-use crate::ebpf::link::{Program, RawLink, RawLinkOptions};
 
+use crate::ebpf::link::RawLink;
 use crate::error::Result;
 
 pub struct PerfEvent {
@@ -14,7 +14,7 @@ pub struct PerfEvent {
 }
 
 impl PerfEvent {
-    pub fn new(cpu: i32) -> Result<Self> {
+    pub fn new(cpu: i32, sample_rate: i32) -> Result<Self> {
         let attr = perf_event_attr {
             type_: PERF_TYPE_SOFTWARE,
             config: PERF_COUNT_SW_CPU_CLOCK as __u64,
@@ -53,22 +53,6 @@ impl PerfEvent {
             }
             Ok(fd)
         }
-    }
-
-    pub fn attach_bpf(&mut self, prog: &Program) -> Result<()> {
-        self.attach_bpf_link(prog)
-    }
-
-    fn attach_bpf_link(&mut self, prog: &Program) -> Result<()> {
-        sys.BPF_PROG_TYPE_PERF_EVENT
-        let opts = RawLinkOptions {
-            target_fd: self.fd,
-            program: prog,
-            attach_type: AttachType::PerfEvent,
-
-        };
-        self.link = Some(attach_raw_link(opts)?);
-        Ok(())
     }
 
     fn close(&mut self) -> Result<()> {
