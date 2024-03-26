@@ -15,11 +15,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .for_each(|name| {
             SkeletonBuilder::new()
-                .source(format!("src/bpf/{}.bpf.c", name))
-                .clang_args("-I src/ebpf/bpf/vmlinux/aarch")
-                .build_and_generate(format!("src/ebpf/bpf/.out/{}.skel.rs", name))
+                .source(format!("src/ebpf/bpf/{}.bpf.c", name))
+                .clang_args("-I src/ebpf/bpf/vmlinux/aarch64 -I src/ebpf/bpf/libbpf -I src/ebpf/bpf")
+                .build_and_generate(format!("src/ebpf/bpf/{}.skel.rs", name))
                 .unwrap();
     });
+
+
+    ["profile"]
+        .iter()
+        .for_each(|name| {
+            SkeletonBuilder::new()
+                .source(format!("src/ebpf/bpf/{}.bpf.h", name))
+                .clang_args("-I src/ebpf/bpf/vmlinux/aarch64 -I src/ebpf/bpf/libbpf -I src/ebpf/bpf")
+                .build_and_generate(format!("src/ebpf/bpf/{}.skel.rs", name))
+                .unwrap();
+        });
 
     Ok(())
 }
