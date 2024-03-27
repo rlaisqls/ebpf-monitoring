@@ -2,8 +2,8 @@
 // Created by korniltsev on 11/21/23.
 //
 
-#ifndef PYROEBPF_PTHREAD_AMD64_H
-#define PYROEBPF_PTHREAD_AMD64_H
+#ifndef IWMEBPF_PTHREAD_AMD64_H
+#define IWMEBPF_PTHREAD_AMD64_H
 
 #include "vmlinux.h"
 #include "bpf_helpers.h"
@@ -99,4 +99,4 @@ static __always_inline int pthread_getspecific_musl(const struct libc *libc, int
     return 0;
 }
 
-#endif //PYROEBPF_PTHREAD_AMD64_H
+#endif //IWMEBPF_PTHREAD_AMD64_H

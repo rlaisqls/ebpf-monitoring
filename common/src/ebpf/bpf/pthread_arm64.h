@@ -2,8 +2,8 @@
 // Created by korniltsev on 11/21/23.
 //
 
-#ifndef PYROEBPF_PTHREAD_ARM64_H
-#define PYROEBPF_PTHREAD_ARM64_H
+#ifndef IWMEBPF_PTHREAD_ARM64_H
+#define IWMEBPF_PTHREAD_ARM64_H
 
 #include "vmlinux.h"
 #include "bpf_helpers.h"
@@ -93,4 +93,4 @@ int __always_inline pthread_getspecific_musl(const struct libc *libc, int32_t ke
 
 
 
-#endif //PYROEBPF_PTHREAD_ARM64_H
+#endif //IWMEBPF_PTHREAD_ARM64_H

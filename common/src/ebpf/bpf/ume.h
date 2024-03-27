@@ -2,7 +2,7 @@
 #define UME_H
 
 
-#if defined(PYROSCOPE_UME)
+#if defined(IWM_UME)
 
 #define pyro_bpf_core_read(dst, sz, src)					    \
 		bpf_probe_read_kernel(dst, sz, src)

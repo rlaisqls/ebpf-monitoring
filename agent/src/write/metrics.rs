@@ -12,31 +12,31 @@ struct Metrics {
 impl Metrics {
     fn new(reg: Option<&prometheus::Registry>) -> Metrics {
         let sent_bytes = register_counter_vec(
-            "pyroscope_write_sent_bytes_total",
+            "iwm_write_sent_bytes_total",
             "Total number of compressed bytes sent to Pyroscope.",
             &["endpoint"],
             reg,
         );
         let dropped_bytes = register_counter_vec(
-            "pyroscope_write_dropped_bytes_total",
+            "iwm_write_dropped_bytes_total",
             "Total number of compressed bytes dropped by Pyroscope.",
             &["endpoint"],
             reg,
         );
         let sent_profiles = register_counter_vec(
-            "pyroscope_write_sent_profiles_total",
+            "iwm_write_sent_profiles_total",
             "Total number of profiles sent to Pyroscope.",
             &["endpoint"],
             reg,
         );
         let dropped_profiles = register_counter_vec(
-            "pyroscope_write_dropped_profiles_total",
+            "iwm_write_dropped_profiles_total",
             "Total number of profiles dropped by Pyroscope.",
             &["endpoint"],
             reg,
         );
         let retries = register_counter_vec(
-            "pyroscope_write_retries_total",
+            "iwm_write_retries_total",
             "Total number of retries to Pyroscope.",
             &["endpoint"],
             reg,

@@ -2,8 +2,8 @@
 // Created by korniltsev on 11/2/23.
 //
 
-#ifndef PYROEBPF_PYSTR_H
-#define PYROEBPF_PYSTR_H
+#ifndef IWMEBPF_PYSTR_H
+#define IWMEBPF_PYSTR_H
 
 #include "pyoffsets.h"
 
@@ -78,4 +78,4 @@ static __always_inline int pystr_read(void *str, py_offset_config *offsets, char
     return 0;
 }
 
-#endif //PYROEBPF_PYSTR_H
+#endif //IWMEBPF_PYSTR_H
