@@ -2,15 +2,19 @@ use std::io;
 use std::os::raw::c_ulong;
 use std::os::unix::io::RawFd;
 
+use libbpf_rs::{Link, Program};
 use perf_event::hooks::sys::bindings::{__u64, PERF_COUNT_SW_CPU_CLOCK, perf_event_attr, PERF_FLAG_FD_CLOEXEC, PERF_TYPE_SOFTWARE};
 use perf_event::hooks::sys::perf_event_open;
 
-use crate::ebpf::link::RawLink;
+use crate::ebpf::{PERF_EVENT_IOC_ENABLE, PERF_EVENT_IOC_SET_BPF};
+use crate::error::Error::InvalidData;
 use crate::error::Result;
 
+#[derive(Clone)]
 pub struct PerfEvent {
     fd: RawFd,
-    link: Option<RawLink>,
+    link: Option<Link>,
+    ioctl: bool
 }
 
 impl PerfEvent {
@@ -20,38 +24,16 @@ impl PerfEvent {
             config: PERF_COUNT_SW_CPU_CLOCK as __u64,
             ..Default::default()
         };
-        let perf_event = PerfEvent::try_new(&attr, cpu)?;
-        Ok(perf_event)
-    }
-
-    fn try_new(attr: &perf_event_attr, cpu: i32) -> Result<Self> {
-        let perf_event = PerfEvent::open(attr, cpu)?;
-        Ok(PerfEvent {
-            fd: perf_event,
-            link: None,
-        })
-    }
-
-    fn open(attr: &perf_event_attr, cpu: i32) -> Result<RawFd> {
-        PerfEvent::open_with_flags(attr, -1, cpu, -1, PERF_FLAG_FD_CLOEXEC)
-    }
-
-    fn open_with_flags(attr: &perf_event_attr, pid: i32, cpu: i32, group_fd: i32, flags: u32) -> Result<RawFd> {
-        PerfEvent::try_open(attr, pid, cpu, group_fd, flags)
-    }
-
-    fn try_open(attr: &perf_event_attr, pid: i32, cpu: i32, group_fd: i32, flags: u32) -> Result<RawFd> {
-        let perf_event = PerfEvent::_open(attr, pid, cpu, group_fd, flags)?;
-        Ok(perf_event)
-    }
-
-    fn _open(attr: &perf_event_attr, pid: i32, cpu: i32, group_fd: i32, flags: u32) -> Result<RawFd> {
         unsafe {
-            let fd = perf_event_open(&mut attr.clone(), pid, cpu, group_fd, flags as c_ulong);
+            let fd = perf_event_open(&mut attr.clone(), -1, cpu, -1, PERF_FLAG_FD_CLOEXEC as c_ulong);
             if fd < 0 {
-                return Err(io::Error::last_os_error().into());
+                return Err(InvalidData("".to_string()));
             }
-            Ok(fd)
+            Ok(PerfEvent {
+                fd,
+                link: None,
+                ioctl: false,
+            })
         }
     }
 
@@ -62,6 +44,26 @@ impl PerfEvent {
         if let Some(link) = self.link.take() {
             link.close()?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn attach_perf_event(&mut self, prog: &mut Program) -> Result<(), io::Error> {
+        match prog.attach_perf_event(self.fd) {
+            Ok(_) => Ok(()),
+            Err(_) => self.attach_perf_event_ioctl(prog),
+        }
+    }
+
+    fn attach_perf_event_ioctl(&mut self, prog: &Program) -> Result<(), io::Error> {
+        let err = unsafe { libc::ioctl(self.fd, PERF_EVENT_IOC_SET_BPF as c_ulong, prog.fd()) };
+        if err == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        let err = unsafe { libc::ioctl(self.fd, PERF_EVENT_IOC_ENABLE as c_ulong, 0) };
+        if err == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        self.ioctl = true;
         Ok(())
     }
 }

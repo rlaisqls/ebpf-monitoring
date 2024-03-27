@@ -10,6 +10,7 @@ struct sample_key {
     __s64 kern_stack;
     __s64 user_stack;
 };
+struct sample_key k__;
 
 #define PROFILING_TYPE_UNKNOWN 1
 #define PROFILING_TYPE_FRAMEPOINTERS 2

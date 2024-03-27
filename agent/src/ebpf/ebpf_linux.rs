@@ -5,14 +5,10 @@ use std::{
 };
 use tokio::time::interval;
 use futures::future::join_all;
+use common::ebpf::sd::target::{Target, TargetFinder};
 
-use pyroscope::{Appendable, Fanout};
-use crate::{
-    component::{self, Options},
-    discovery::{self, TargetFinder},
-};
-use ebpfspy::{self as ebpf, DebugInfo as EbpfDebugInfo, Session as EbpfSession};
-use crate::appender::Appendable;
+use crate::appender::{Appendable, Fanout};
+use crate::common::registry::Options;
 
 // Define the component's arguments structure
 #[derive(Debug)]
@@ -38,9 +34,8 @@ pub struct Component {
     options: Options,
     args: Arguments,
     target_finder: TargetFinder,
-    session: EbpfSession,
+    session: Session,
     appendable: Fanout,
-    debug_info: EbpfDebugInfo,
 }
 
 // Implement methods for the component
@@ -48,9 +43,9 @@ impl Component {
     // Create a new instance of the component
     pub async fn new(opts: Options, args: Arguments) -> Result<Self, Box<dyn std::error::Error>> {
         let target_finder = TargetFinder::new("/");
-        let session = ebpf::Session::new(&target_finder, convert_session_options(&args));
+        let session = Session::new(&target_finder, convert_session_options(&args));
 
-        let debug_info = EbpfDebugInfo {
+        let debug_info = DebugInfo {
             targets: target_finder.debug_info(),
             session: session.debug_info(),
         };
@@ -74,12 +69,12 @@ impl Component {
                 _ = interval.tick() => {
                     let result = self.collect_profiles().await;
                     if let Err(err) = result {
-                        self.options.logger.error(format!("ebpf profiling session failed: {}", err));
+                        dbg!(format!("ebpf profiling session failed: {}", err));
                     }
                     self.update_debug_info();
                 }
                 _ = self.session.changed() => {
-                    let debug_info = EbpfDebugInfo {
+                    let debug_info = DebugInfo {
                         targets: self.target_finder.debug_info(),
                         session: self.session.debug_info(),
                     };

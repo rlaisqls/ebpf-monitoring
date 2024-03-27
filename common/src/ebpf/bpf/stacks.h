@@ -1,5 +1,5 @@
-#ifndef PYROSCOPE_STACKS_H
-#define PYROSCOPE_STACKS_H
+#ifndef IWM_STACKS_H
+#define IWM_STACKS_H
 
 #define PERF_MAX_STACK_DEPTH      127
 #define PROFILE_MAPS_SIZE         16384

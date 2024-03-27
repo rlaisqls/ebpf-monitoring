@@ -12,12 +12,13 @@ const METRIC_NAME: &str = "__name__";
 const LABEL_CONTAINER_ID: &str = "__container_id__";
 const LABEL_PID: &str = "__process_pid__";
 const LABEL_SERVICE_NAME: &str = "service_name";
-const LABEL_SERVICE_NAME_K8S: &str = "__meta_kubernetes_pod_annotation_pyroscope_io_service_name";
+const LABEL_SERVICE_NAME_K8S: &str = "__meta_kubernetes_pod_annotation_iwm_io_service_name";
 const METRIC_VALUE: &str = "process_cpu";
 const RESERVED_LABEL_PREFIX: &str = "__";
 
 type DiscoveryTarget = HashMap<String, String>;
 
+#[derive(Debug)]
 pub struct Target {
     labels: Labels,
     service_name: String,
@@ -80,7 +81,7 @@ impl Target {
 }
 
 fn infer_service_name(target: DiscoveryTarget) -> String {
-    let label_service_name_k8s ="__meta_kubernetes_pod_annotation_pyroscope_io_service_name";
+    let label_service_name_k8s ="__meta_kubernetes_pod_annotation_iwm_io_service_name";
     if let Some(k8s_service_name) = target.get(label_service_name_k8s).filter(|s| !s.is_empty()) {
         return k8s_service_name.clone();
     }

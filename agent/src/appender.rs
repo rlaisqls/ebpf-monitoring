@@ -25,15 +25,15 @@ pub struct Fanout {
 }
 
 impl Fanout {
-    fn new(
+    pub(crate) fn new(
         children: Vec<Arc<dyn Appendable + Send + Sync>>,
         component_id: String,
         mut register: Registry
     ) -> Self {
         let histogram = Histogram::new(exponential_buckets(1.0, 2.0, 10));
         register.register(
-            "pyroscope_fanout_latency",
-            "Write latency for sending to pyroscope profiles",
+            "iwm_fanout_latency",
+            "Write latency for sending to iwm profiles",
             histogram.clone()
         );
         Fanout {

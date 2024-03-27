@@ -2,8 +2,8 @@
 // Created by korniltsev on 11/2/23.
 //
 
-#ifndef PYROEBPF_PYOFFSETS_H
-#define PYROEBPF_PYOFFSETS_H
+#ifndef IWMEBPF_PYOFFSETS_H
+#define IWMEBPF_PYOFFSETS_H
 
 
 
@@ -43,4 +43,4 @@ typedef struct {
 
 } py_offset_config;
 
-#endif //PYROEBPF_PYOFFSETS_H
+#endif //IWMEBPF_PYOFFSETS_H

@@ -37,27 +37,27 @@ impl Metrics {
     fn new() -> Self {
         Self {
             sent_bytes: register_counter_vec!(
-                "pyroscope_write_sent_bytes_total",
+                "iwm_write_sent_bytes_total",
                 "Total number of compressed bytes sent to Pyroscope.",
                 &["endpoint"]
             ).unwrap(),
             dropped_bytes: register_counter_vec!(
-                "pyroscope_write_dropped_bytes_total",
+                "iwm_write_dropped_bytes_total",
                 "Total number of compressed bytes dropped by Pyroscope.",
                 &["endpoint"]
             ).unwrap(),
             sent_profiles: register_counter_vec!(
-                "pyroscope_write_sent_profiles_total",
+                "iwm_write_sent_profiles_total",
                 "Total number of profiles sent to Pyroscope.",
                 &["endpoint"]
             ).unwrap(),
             dropped_profiles: register_counter_vec!(
-                "pyroscope_write_dropped_profiles_total",
+                "iwm_write_dropped_profiles_total",
                 "Total number of profiles dropped by Pyroscope.",
                 &["endpoint"]
             ).unwrap(),
             retries: register_counter_vec!(
-                "pyroscope_write_retries_total",
+                "iwm_write_retries_total",
                 "Total number of retries to Pyroscope.",
                 &["endpoint"]
             ).unwrap(),
@@ -121,7 +121,7 @@ impl Component for WriteComponent {
     async fn update(&mut self, new_cfg: Arguments) -> Result<()> {
         self.cfg = new_cfg.clone();
         // Assuming level.Debug and Log are part of a logging library
-        debug!(self.opts.logger, "updating pyroscope.write config"; "old" => format!("{:?}", self.cfg), "new" => format!("{:?}", new_config));
+        debug!(self.opts.logger, "updating iwm.write config"; "old" => format!("{:?}", self.cfg), "new" => format!("{:?}", new_config));
 
         let receiver = FanOutClient::new(&self.opts, new_cfg, &self.metrics).await.unwrap();
         self.opts.on_state_change(Box::new(receiver));

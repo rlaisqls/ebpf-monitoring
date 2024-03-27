@@ -1,5 +1,5 @@
 use std::time::Duration;
-use crate::pyroscope::Appendable;
+use crate::iwm::Appendable;
 use crate::discovery::Target;
 
 pub struct Arguments {

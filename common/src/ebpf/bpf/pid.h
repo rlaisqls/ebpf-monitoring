@@ -1,12 +1,12 @@
 
-#if !defined(PYROSCOPE_PID)
-#define PYROSCOPE_PID
+#if !defined(IWM_PID)
+#define IWM_PID
 
 // this should not be used in production, and always be disabled
 // but is useful for running in a privileged context outside host pid namespace, for example wsl2
-//#define PYROSCOPE_PID_NAMESPACED
+//#define IWM_PID_NAMESPACED
 
-#if defined(PYROSCOPE_PID_NAMESPACED)
+#if defined(IWM_PID_NAMESPACED)
 
 #include "bpf_core_read.h"
 // https://github.com/grafana/beyla/blob/6366275ce2d2c9bdefd47975b389fbcf39cbbea8/bpf/pid.h#L13
@@ -35,13 +35,13 @@ static __always_inline void current_pid(u32 *pid) {
 //    *pid_ns_id = ns.inum;
 }
 
-#else // PYROSCOPE_PID_NAMESPACED
+#else // IWM_PID_NAMESPACED
 
 static __always_inline void current_pid(u32 *pid) {
   u64 pid_tgid = bpf_get_current_pid_tgid();
   *pid = (u32)(pid_tgid >> 32);
 }
-#endif // PYROSCOPE_PID_NAMESPACED
+#endif // IWM_PID_NAMESPACED
 
 
-#endif // PYROSCOPE_PID
+#endif // IWM_PID
