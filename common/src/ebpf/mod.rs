@@ -8,6 +8,12 @@ pub mod pprof;
 pub mod perf_event;
 pub mod sync;
 mod kprobe;
+mod wait_group;
+mod reader;
+mod epoll;
+mod poll;
+mod poller;
+mod epoll;
 
 
 pub(crate) const PERF_EVENT_IOC_ENABLE: core::ffi::c_int = 9216;

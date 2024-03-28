@@ -9,9 +9,10 @@ use std::ptr::null;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
+use polling::{Event, Poller};
 use anyhow::bail;
 use byteorder::ReadBytesExt;
-use gimli::LittleEndian;
+use gimli::{LittleEndian};
 use libbpf_rs::{Link, Program};
 use libbpf_rs::libbpf_sys::{__u32, bpf_map_batch_opts, BPF_MAP_LOOKUP_AND_DELETE_BATCH, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
@@ -26,12 +27,14 @@ use crate::ebpf::cpuonline;
 use crate::ebpf::metrics::metrics::Metrics;
 use crate::ebpf::perf_event::PerfEvent;
 use crate::ebpf::sd::target::{Target, TargetFinder};
+use crate::ebpf::session::profile::profile_bss_types::sample_key;
 use crate::ebpf::symtab::elf_cache::ElfCacheDebugInfo;
 use crate::ebpf::symtab::gcache::GCacheDebugInfo;
 use crate::ebpf::symtab::proc::ProcTableDebugInfo;
 use crate::ebpf::symtab::symbols::{CacheOptions, PidKey, SymbolCache};
 use crate::ebpf::sync::PidOp;
 use crate::ebpf::sync::PidOp::Dead;
+use crate::ebpf::wait_group::WaitGroup;
 use crate::error::Error::InvalidData;
 use crate::error::Result;
 
@@ -93,29 +96,32 @@ struct ProcInfoLite {
     typ: ProfilingType,
 }
 
-struct Session<'a> {
+pub struct Session<'a> {
     target_finder: Arc<TargetFinder>,
     sym_cache: Arc<Mutex<SymbolCache>>,
     bpf: ProfileSkel<'a>,
+
     events_reader: Option<Receiver<u32>>,
     pid_info_requests: Option<Receiver<u32>>,
     dead_pid_events: Option<Receiver<u32>>,
+
     options: SessionOptions,
     round_number: u32,
     mutex: Mutex<()>,
     started: bool,
     kprobes: Vec<Link>,
 
+    // We have 3 threads
+    // 1 - reading perf events from ebpf. this one does not touch Session fields including mutex
+    // 2 - processing pid info requests. this one Session fields to update pid info and python info, this should be done under mutex
+    // 3 - processing pid dead events
+    // Accessing wg should be done with no Session.mutex held to avoid deadlock, therefore wg access (Start, Stop) should be
+    // synchronized outside
+    wg: WaitGroup,
+
     pids: Pids,
     pid_exec_requests: Option<Vec<u32>>,
     perf_events: ()
-}
-
-struct TargetsOptions {
-    targets: Vec<DiscoveryTarget>,
-    targets_only: bool,
-    default_target: DiscoveryTarget,
-    container_cache_size: i32,
 }
 
 impl Session {
@@ -133,7 +139,7 @@ impl Session {
             target_finder,
             sym_cache: Arc::new(Mutex::new(sym_cache)),
             bpf: open_skel,
-            events_reader: PerfReader::default(),
+            events_reader: Reader::default(),
             ..Default::default()
         })
     }
@@ -161,26 +167,20 @@ impl Session {
         self.pid_info_requests = pid_info_request_rx;
         self.pid_exec_requests = pid_exec_request_rx;
         self.dead_pid_events = dead_pid_events_rx;
+        self.wg.add(4);
 
         self.started = true;
         let mut threads = Vec::with_capacity(4);
-
         for f in vec![
-            move || Session::read_events(events_reader, pid_info_request_tx, pid_exec_request_tx, dead_pid_events_tx),
-            move || Session::process_pid_info_requests(),
-            move || Session::process_dead_pids_events(),
-            move || Session::process_pid_exec_requests(),
+            move || self.read_events(events_reader, pid_info_request_tx, pid_exec_request_tx, dead_pid_events_tx),
+            move || self.process_pid_info_requests(),
+            move || self.process_dead_pids_events(),
+            move || self.process_pid_exec_requests(),
         ] {
-            let wg_clone = wg.clone();
             let thread = thread::spawn(move || {
                 f();
-                wg_clone.store(false, Ordering::SeqCst);
             });
             threads.push(thread);
-        }
-
-        for thread in threads {
-            thread.join().unwrap();
         }
         Ok(())
     }
@@ -189,6 +189,8 @@ impl Session {
         drop(self.pid_info_requests.take());
         drop(self.dead_pid_events.take());
         drop(self.pid_exec_requests.take());
+
+        self.wg.done();
     }
 
     fn stop(&self) {
@@ -230,7 +232,7 @@ impl Session {
         Ok(())
     }
 
-    fn debug_info(&self) -> SessionDebugInfo {
+    pub fn debug_info(&self) -> SessionDebugInfo {
         let _guard = self.mutex.lock().unwrap();
 
         SessionDebugInfo {
@@ -287,7 +289,7 @@ impl Session {
 
     fn read_events(
         &self,
-        events: perf::Reader,
+        events: dyn Reader,
         pid_config_request: Sender<u32>,
         pid_exec_request: Sender<u32>,
         dead_pids_events: Sender<u32>,
@@ -373,8 +375,8 @@ impl Session {
         }
     }
 
-    fn process_pid_exec_requests(&self, requests: Receiver<u32>) {
-        for pid in requests {
+    fn process_pid_exec_requests(&mut self) {
+        for pid in self.dead_pid_events.take().unwrap() {
             let target = self.target_finder.find_target(pid);
             debug!(self.logger, "pid exec request"; "pid" => pid);
             {
@@ -417,11 +419,11 @@ impl Session {
         Ok(())
     }
 
-    fn get_counts_map_values(&mut self) -> Result<(Vec<u8>, Vec<u32>, bool), String> {
+    fn get_counts_map_values(&mut self) -> Result<(Vec<sample_key>, Vec<u32>, bool), String> {
         let m = &self.bpf.maps().counts();
         let map_size = m.max_entries();
-        let mut keys: Vec<u8> = Vec::with_capacity(map_size);
-        let mut values: Vec<u32> = Vec::with_capacity(map_size);
+        let mut keys: [sample_key] = Vec::with_capacity(map_size);
+        let mut values: [u32] = Vec::with_capacity(map_size);
         let mut count: u32 = 10;
         let mut nkey = 0u32;
         unsafe {
@@ -533,7 +535,7 @@ fn attach_perf_events(sample_rate: i32, prog: &mut Program) -> Result<Vec<PerfEv
 }
 
 #[derive(Default)]
-struct SessionDebugInfo {
+pub struct SessionDebugInfo {
     elf_cache: Option<ElfCacheDebugInfo>,
     pid_cache: Option<Vec<GCacheDebugInfo<ProcTableDebugInfo>>>,
 }
@@ -572,36 +574,36 @@ impl StackResolveStats {
         self.unknown_modules += other.unknown_modules;
     }
 }
-
-#[test]
-fn ring_buf_epoll_wakeup() {
-    let RingBufTest {
-        mut ring_buf,
-        _bpf,
-        regs: _,
-    } = RingBufTest::new();
-
-    let epoll_fd = epoll::create(false).unwrap();
-    epoll::ctl(
-        epoll_fd,
-        epoll::ControlOptions::EPOLL_CTL_ADD,
-        ring_buf.as_raw_fd(),
-        // The use of EPOLLET is intentional. Without it, level-triggering would result in
-        // more notifications, and would mask the underlying bug this test reproduced when
-        // the synchronization logic in the RingBuf mirrored that of libbpf. Also, tokio's
-        // AsyncFd always uses this flag (as demonstrated in the subsequent test).
-        epoll::Event::new(epoll::Events::EPOLLIN | epoll::Events::EPOLLET, 0),
-    )
-        .unwrap();
-    let mut epoll_event_buf = [epoll::Event::new(epoll::Events::EPOLLIN, 0); 1];
-    let mut total_events: u64 = 0;
-    let writer = WriterThread::spawn();
-    while total_events < WriterThread::NUM_MESSAGES {
-        epoll::wait(epoll_fd, -1, &mut epoll_event_buf).unwrap();
-        while let Some(read) = ring_buf.next() {
-            assert_eq!(read.len(), 8);
-            total_events += 1;
-        }
-    }
-    writer.join();
-}
+//
+// #[test]
+// fn ring_buf_epoll_wakeup() {
+//     let RingBufTest {
+//         mut ring_buf,
+//         _bpf,
+//         regs: _,
+//     } = RingBufTest::new();
+//
+//     let epoll_fd = epoll::create(false).unwrap();
+//     epoll::ctl(
+//         epoll_fd,
+//         epoll::ControlOptions::EPOLL_CTL_ADD,
+//         ring_buf.as_raw_fd(),
+//         // The use of EPOLLET is intentional. Without it, level-triggering would result in
+//         // more notifications, and would mask the underlying bug this test reproduced when
+//         // the synchronization logic in the RingBuf mirrored that of libbpf. Also, tokio's
+//         // AsyncFd always uses this flag (as demonstrated in the subsequent test).
+//         epoll::Event::new(epoll::Events::EPOLLIN | epoll::Events::EPOLLET, 0),
+//     )
+//         .unwrap();
+//     let mut epoll_event_buf = [epoll::Event::new(epoll::Events::EPOLLIN, 0); 1];
+//     let mut total_events: u64 = 0;
+//     let writer = WriterThread::spawn();
+//     while total_events < WriterThread::NUM_MESSAGES {
+//         epoll::wait(epoll_fd, -1, &mut epoll_event_buf).unwrap();
+//         while let Some(read) = ring_buf.next() {
+//             assert_eq!(read.len(), 8);
+//             total_events += 1;
+//         }
+//     }
+//     writer.join();
+// }

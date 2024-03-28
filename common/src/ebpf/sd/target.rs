@@ -1,22 +1,27 @@
 use std::collections::HashMap;
 use std::fs;
+use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, BufReader};
 use std::num::NonZeroUsize;
+use std::ops::Deref;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use lru::LruCache;
+use log::{debug, warn};
 
 use crate::common::labels::Labels;
+use crate::ebpf::sd::container_id::container_id_from_target;
 
+pub const LABEL_CONTAINER_ID: &str = "__container_id__";
 const METRIC_NAME: &str = "__name__";
-const LABEL_CONTAINER_ID: &str = "__container_id__";
 const LABEL_PID: &str = "__process_pid__";
 const LABEL_SERVICE_NAME: &str = "service_name";
 const LABEL_SERVICE_NAME_K8S: &str = "__meta_kubernetes_pod_annotation_iwm_io_service_name";
 const METRIC_VALUE: &str = "process_cpu";
 const RESERVED_LABEL_PREFIX: &str = "__";
 
-type DiscoveryTarget = HashMap<String, String>;
+pub(crate) type DiscoveryTarget = HashMap<String, String>;
 
 #[derive(Debug)]
 pub struct Target {
@@ -104,39 +109,40 @@ fn infer_service_name(target: DiscoveryTarget) -> String {
     "unspecified".to_string()
 }
 
-pub struct TargetFinder {
-    cid2target: Arc<Mutex<HashMap<String, Arc<Target>>>>,
-    pid2target: Arc<Mutex<HashMap<u32, Arc<Target>>>>,
 
-    container_id_cache: Arc<Mutex<LruCache<u32, String>>>,
-    default_target: Option<Arc<Target>>,
-    fs: Arc<fs::File>,
-    sync: Mutex<()>,
+pub(crate) struct TargetsOptions {
+    targets: Vec<DiscoveryTarget>,
+    targets_only: bool,
+    default_target: DiscoveryTarget,
+    container_cache_size: usize,
 }
 
-lazy_static::lazy_static! {
-    static ref CGROUP_CONTAINER_ID_RE: regex::Regex =
-        regex::Regex::new(r#"^.*/(?:.*-)?([0-9a-f]{64})(?:\.|\s*$)"#).unwrap();
+pub struct TargetFinder {
+    cid2target: HashMap<String, Target>,
+    pid2target: HashMap<u32, Target>,
+    container_id_cache: Mutex<LruCache<u32, String>>,
+    default_target: Option<Arc<Target>>,
+    fs: File,
+    sync: Mutex<()>
 }
 
 impl TargetFinder {
-    fn new(fs: Arc<fs::File>, container_cache_size: usize) -> Self {
-        Self {
-            cid2target: Arc::new(Mutex::new(HashMap::new())),
-            pid2target: Arc::new(Mutex::new(HashMap::new())),
-            container_id_cache: Arc::new(
-                Mutex::new(LruCache::new(NonZeroUsize::try_from(container_cache_size).unwrap()))
+    fn new(container_cache_size: usize, fs: File) -> TargetFinder {
+        TargetFinder {
+            cid2target: HashMap::new(),
+            pid2target: HashMap::new(),
+            container_id_cache: Mutex::new(
+                LruCache::new(NonZeroUsize::try_from(container_cache_size).unwrap())
             ),
             default_target: None,
             fs,
-            sync: Mutex::new(()),
+            sync: Mutex::new(())
         }
     }
 
-    pub fn find_target(&self, pid: u32) -> Option<Arc<Target>> {
-        let pid2target = self.pid2target.lock().unwrap();
-        if let Some(target) = pid2target.get(&pid) {
-            return Some(target.clone());
+    pub(crate) fn find_target(&self, pid: u32) -> Option<Target> {
+        if let Some(&target) = self.pid2target.get(&pid) {
+            return Some(*target.clone());
         }
 
         let cid = {
@@ -144,51 +150,82 @@ impl TargetFinder {
             cache.get(&pid).cloned()
         };
 
-        if let Some(cid) = cid {
-            let cid2target = self.cid2target.lock().unwrap();
-            cid2target.get(&cid).cloned()
-        } else {
-            self.default_target.clone()
+        match cid {
+            Some(cid) => self.cid2target.get(&cid).cloned(),
+            None => self.default_target.clone(),
         }
     }
 
-    fn get_container_id_from_pid(&self, pid: u32) -> Option<ContainerID> {
-        let path = format!("/proc/{}/cgroup", pid);
-        let file = match self.fs.open(&path) {
-            Ok(f) => f,
-            Err(_) => return None,
-        };
-        let reader = BufReader::new(file);
+    fn remove_dead_pid(&mut self, pid: u32) {
+        self.pid2target.remove(&pid);
+        let mut cache = self.container_id_cache.lock().unwrap();
+        cache.pop(&pid);
+    }
 
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                if let Some(container_id) = get_container_id_from_cgroup(&line) {
-                    return Some(container_id.into());
-                }
+    fn update(&mut self, args: TargetsOptions) {
+        let mut guard = self.sync.lock().unwrap();
+        self.set_targets(&args);
+        self.resize_container_id_cache(args.container_cache_size);
+    }
+
+    fn set_targets(&mut self, opts: &TargetsOptions) {
+        debug!(self.l, "set targets"; "count" => opts.targets.len());
+        let mut container_id2_target = HashMap::new();
+        let mut pid2_target = HashMap::new();
+
+        for target in &opts.targets {
+            if let Some(pid) = pid_from_target(target) {
+                let t = Target::new("".to_string(), pid, target.clone());
+                pid2_target.insert(pid, t);
+            } else if let Some(cid) = container_id_from_target(target) {
+                let t = Target::new(cid.clone(), 0, target.clone());
+                container_id2_target.insert(cid.clone(), t);
             }
         }
-        None
+
+        if !opts.targets.is_empty() && container_id2_target.is_empty() && pid2_target.is_empty() {
+            warn!("No targets found");
+        }
+
+        self.cid2target = container_id2_target;
+        self.pid2target = pid2_target;
+
+        self.default_target = if opts.targets_only {
+            None
+        } else {
+            Some(
+                Arc::from(Target::new("".to_string(), 0, opts.default_target.clone()))
+            )
+        };
+
+        debug!(self.l, "created targets"; "count" => self.cid2target.len());
+    }
+
+    fn resize_container_id_cache(&mut self, size: usize) {
+        self.container_id_cache.resize(size);
+    }
+
+    pub fn debug_info(&mut self) -> Vec<String> {
+        self.cid2target.clone()
+            .iter_mut()
+            .map(|(_, &mut target)| {
+                let (key, value) = target.labels(); // Cannot move
+                format!("{}: {}", key, value)
+            })
+            .collect()
+    }
+
+    fn targets(&self) -> Vec<Arc<Target>> {
+        self.cid2target.values().cloned().collect()
     }
 }
 
-fn get_container_id_from_cgroup(line: &str) -> Option<String> {
-    if let Some(captures) = CGROUP_CONTAINER_ID_RE.captures(line) {
-        if let Some(cid) = captures.get(1) {
-            return Some(cid.as_str().to_owned());
+
+fn pid_from_target(target: &DiscoveryTarget) -> u32 {
+    if let Some(t) = target.get(LABEL_PID) {
+        if let Ok(pid) = u32::from_str(t) {
+            return pid;
         }
     }
-    None
-}
-
-const KNOWN_CONTAINER_ID_PREFIXES: [&str; 3] = ["docker://", "containerd://", "cri-o://"];
-
-pub type ContainerID = String;
-
-fn get_container_id_from_k8s(k8s_container_id: &str) -> Option<ContainerID> {
-    for &prefix in KNOWN_CONTAINER_ID_PREFIXES.iter() {
-        if k8s_container_id.starts_with(prefix) {
-            return Some(k8s_container_id.trim_start_matches(prefix).to_owned());
-        }
-    }
-    None
+    0
 }

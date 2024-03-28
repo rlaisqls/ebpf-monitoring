@@ -6,6 +6,7 @@ use std::{
 use tokio::time::interval;
 use futures::future::join_all;
 use common::ebpf::sd::target::{Target, TargetFinder};
+use common::ebpf::session::{Session, SessionDebugInfo};
 
 use crate::appender::{Appendable, Fanout};
 use crate::common::registry::Options;
@@ -30,12 +31,18 @@ pub struct Arguments {
 
 // Define the component structure
 #[derive(Debug)]
-pub struct Component {
+pub struct Component<'a> {
     options: Options,
     args: Arguments,
     target_finder: TargetFinder,
-    session: Session,
+    session: Session<'a>,
     appendable: Fanout,
+    debug_info: DebugInfo
+}
+
+struct DebugInfo {
+    targets: Vec<String>,
+    session: SessionDebugInfo
 }
 
 // Implement methods for the component
@@ -43,12 +50,7 @@ impl Component {
     // Create a new instance of the component
     pub async fn new(opts: Options, args: Arguments) -> Result<Self, Box<dyn std::error::Error>> {
         let target_finder = TargetFinder::new("/");
-        let session = Session::new(&target_finder, convert_session_options(&args));
-
-        let debug_info = DebugInfo {
-            targets: target_finder.debug_info(),
-            session: session.debug_info(),
-        };
+        let session = Session::new(&target_finder, convert_session_options(&args)).unwrap();
 
         Ok(Self {
             options: opts,
@@ -56,7 +58,6 @@ impl Component {
             target_finder,
             session,
             appendable: Fanout::new(args.forward_to, opts.id, opts.registerer),
-            debug_info,
         })
     }
 
