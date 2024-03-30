@@ -1,21 +1,24 @@
 use std::io::{self, Read};
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::ops::Deref;
+use std::os::unix::io::RawFd;
+use std::{mem, ptr};
 use std::sync::{Arc, Mutex};
-use std::task::Poll;
-use std::time::{Duration, SystemTime};
-use libbpf_rs::Map;
-use polling::Poller;
-use crate::error::{Error, Result};
-use crate::error::Error::{Closed, EndOfRing, InvalidData, MustBePaused, NotFound, UnexpectedEof, UnknownEvent};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::SystemTime;
 
-// Define perf event types
+use libbpf_rs::libbpf_sys::{PERF_COUNT_SW_BPF_OUTPUT, PERF_FLAG_FD_CLOEXEC, PERF_SAMPLE_RAW, PERF_TYPE_SOFTWARE};
+use libbpf_rs::Map;
+use libc::{c_int, c_void, close, MAP_FAILED, MAP_SHARED, mmap, munmap, pid_t, PROT_READ};
+use polling::Poller;
+
+use crate::ebpf::perf_event::{PerfEventAttr, sys_perf_event_open};
+use crate::error::Error::{Closed, EndOfRing, InvalidData, MustBePaused, UnknownEvent};
+use crate::error::Result;
+
 const PERF_RECORD_LOST: u32 = 2;
 const PERF_RECORD_SAMPLE: u32 = 1;
-
-// Define perf event header size
 const PERF_EVENT_HEADER_SIZE: usize = std::mem::size_of::<PerfEventHeader>();
 
-// Define perf event header struct
 #[repr(C)]
 #[derive(Debug)]
 struct PerfEventHeader {
@@ -24,16 +27,14 @@ struct PerfEventHeader {
     size: u16,
 }
 
-// Define record struct
 #[derive(Debug)]
-struct Record {
+pub struct Record {
     cpu: i32,
     raw_sample: Vec<u8>,
     lost_samples: u64,
     remaining: i32,
 }
 
-// Define error types
 #[derive(Debug)]
 enum PerfError {
     Closed,
@@ -47,42 +48,57 @@ impl From<io::Error> for PerfError {
     }
 }
 
-// Define perf reader struct
-struct PerfReader {
+// Reader allows reading bpf_perf_event_output from user space.
+pub struct Reader {
     poller: Arc<Poller>,
     deadline: Option<SystemTime>,
-    mu: Mutex<()>,
-    array: Map,
 
+    // mu protects read/write access to the Reader structure with the
+    // exception of 'pauseFds', which is protected by 'pauseMu'.
+    // If locking both 'mu' and 'pauseMu', 'mu' must be locked first.
+    mu: Arc<Mutex<()>>,
+
+    // Closing a PERF_EVENT_ARRAY removes all event fds
+    // stored in it, so we keep a reference alive.
+    array: Map,
     rings: Vec<PerfEventRing>,
     epoll_events: Vec<epoll::Event>,
     epoll_rings: Vec<PerfEventRing>,
     event_header: Vec<u8>,
-    pause_mu: Mutex<()>, // Use Mutex as a placeholder for locking
+
+    pause_mu: Arc<Mutex<()>>,
     pause_fds: Vec<RawFd>,
+
     paused: bool,
     overwritable: bool,
+
     buffer_size: usize,
 }
 
-impl PerfReader {
-    // Constructor
-    unsafe fn new(array: &Map, per_cpu_buffer: usize) -> Result<Self, PerfError> {
+impl Reader {
+    pub fn new(array: &Map, per_cpu_buffer: usize) -> Result<Self, PerfError> {
         let n_cpu = array.max_entries() as usize;
         let mut rings = Vec::with_capacity(n_cpu);
         let mut pause_fds = Vec::with_capacity(n_cpu);
         let poller = Arc::new(Poller::new()?);
 
-        // Initialize each perf event ring
+        // bpf_perf_event_output checks which CPU an event is enabled on,
+        // but doesn't allow using a wildcard like -1 to specify "all CPUs".
+        // Hence, we have to create a ring for each CPU.
+        let mut buffer_size = 0;
         for i in 0..n_cpu {
             let ring = PerfEventRing::new(i as i32, per_cpu_buffer, false)?;
+            buffer_size = ring.size();
+
             let fd = ring.fd;
-            poller.add(fd, i as i32)?;
             rings.push(ring);
             pause_fds.push(fd);
+            unsafe {
+                poller.add(fd, i as i32)?;
+            }
         }
 
-        Ok(PerfReader {
+        Ok(Reader {
             poller,
             deadline: None,
             mu: Mutex::new(()),
@@ -95,11 +111,10 @@ impl PerfReader {
             pause_fds,
             paused: false,
             overwritable: false,
-            buffer_size: 0, // Update buffer size if needed
+            buffer_size
         })
     }
 
-    // Close method
     fn close(&mut self) -> Result<(), PerfError> {
         self.poller.close()?;
         for ring in &self.rings {
@@ -109,7 +124,6 @@ impl PerfReader {
         Ok(())
     }
 
-    // Set deadline method
     fn set_deadline(&mut self, t: Option<SystemTime>) {
         self.deadline = t;
     }
@@ -126,8 +140,7 @@ impl PerfReader {
     }
 
     fn read_into(&mut self, rec: &mut Record) -> Result<()> {
-        let mut mu = self.mu.lock().unwrap();
-        let mut pause_mu = self.pause_mu.lock().unwrap();
+        let _ = self.mu.lock().unwrap();
 
         if self.overwritable && !self.paused {
             return Err(MustBePaused);
@@ -139,11 +152,8 @@ impl PerfReader {
 
         loop {
             if self.epoll_rings.is_empty() {
-                // NB: The deferred pauseMu.Unlock will panic if Wait panics, which
-                // might obscure the original panic.
-                drop(pause_mu);
                 let n_events = self.poller.wait(&mut self.epoll_events, self.deadline)?;
-                pause_mu = self.pause_mu.lock().unwrap();
+                let _ = self.pause_mu.lock().unwrap();
 
                 // Re-validate pr.paused since we dropped pauseMu.
                 if self.overwritable && !self.paused {
@@ -177,62 +187,18 @@ impl PerfReader {
         }
     }
 
-    // Pause method
-    fn pause(&mut self) -> Result<(), PerfError> {
-        let mut pause_mu = self.pause_mu.lock().unwrap();
-
-        if self.pause_fds.is_empty() {
-            return Err(PerfError::Closed);
-        }
-
-        for &i in self.pause_fds.iter() {
-            if let Err(e) = self.array.delete(i) {
-                if e != Error::NotFound {
-                    return Err(PerfError::from(io::Error::new(io::ErrorKind::Other, format!("couldn't delete event fd for CPU {}: {}", i, e))));
-                }
-            }
-        }
-
-        self.paused = true;
-        Ok(())
-    }
-
-    // Resume method
-    fn resume(&mut self) -> Result<(), PerfError> {
-        let mut pause_mu = self.pause_mu.lock().unwrap();
-
-        if self.pause_fds.is_empty() {
-            return Err(PerfError::Closed);
-        }
-
-        for (i, &fd) in self.pause_fds.iter().enumerate() {
-            if fd == -1 {
-                continue;
-            }
-
-            if let Err(e) = self.array.put(i as u32, fd as u32) {
-                return Err(PerfError::from(io::Error::new(io::ErrorKind::Other, format!("couldn't put event fd {} for CPU {}: {}", fd, i, e))));
-            }
-        }
-
-        self.paused = false;
-        Ok(())
-    }
-
-    // Buffer size method
     fn buffer_size(&self) -> usize {
         self.buffer_size
     }
 
-    // Read record from ring method
     fn read_record_from_ring(&mut self, rec: &mut Record, ring: &mut PerfEventRing) -> Result<()> {
         ring.write_tail();
         rec.cpu = ring.cpu;
-        let err = read_record(ring, rec, &mut self.event_header, self.overwritable)?;
+        read_record(ring, rec, &mut self.event_header, self.overwritable)?;
         if self.overwritable {
             return Err(EndOfRing);
         }
-        rec.remaining = ring.remaining();
+        rec.remaining = ring.remaining() as i32;
         Ok(())
     }
 }
@@ -287,47 +253,154 @@ fn read_raw_sample(rd: &mut dyn Read, overwritable: bool) -> Result<Vec<u8>, io:
     Ok(data)
 }
 
-// Define perf event ring struct
+
+trait RingReader {
+    fn load_head(&self);
+    fn size(&self) -> usize;
+    fn remaining(&self) -> usize;
+    fn write_tail(&self);
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error>;
+}
+
 struct PerfEventRing {
     fd: RawFd,
     cpu: i32,
-    overwritable: bool,
+    mmap: *mut u8,
+    ring_reader: dyn RingReader
 }
 
 impl PerfEventRing {
-    // Constructor
-    fn new(cpu: i32, per_cpu_buffer: usize, overwritable: bool) -> Result<Self, PerfError> {
-        // Create new perf event ring
-        unimplemented!()
+
+    fn new(cpu: i32, per_cpu_buffer: i32, watermark: i32) -> io::Result<Self> {
+        if watermark >= per_cpu_buffer {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "watermark must be smaller than per_cpu_buffer"));
+        }
+
+        let fd = create_perf_event(cpu, watermark)?;
+
+        let mmap_size = perf_buffer_size(per_cpu_buffer as usize);
+        let protections = PROT_READ;
+
+        let mmap = unsafe {
+            mmap(ptr::null_mut(), mmap_size, protections, MAP_SHARED, fd, 0)
+        };
+
+        if mmap == MAP_FAILED {
+            unsafe { close(fd) };
+            return Err(io::Error::last_os_error());
+        }
+
+        let ring_reader= ForwardReader::new();
+
+        Ok(PerfEventRing {
+            fd,
+            cpu,
+            mmap: mmap as *mut u8,
+            ring_reader,
+        })
     }
 
-    // Close method
-    fn close(&self) {
-        // Close ring
-        unimplemented!()
+    fn close(&mut self) {
+        let _ = unsafe { close(self.fd) };
+        let _ = unsafe { munmap(self.mmap as *mut c_void, 0) };
+
+        self.fd = -1;
+        self.mmap = ptr::null_mut();
+    }
+}
+
+fn perf_buffer_size(per_cpu_buffer: usize) -> usize {
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let n_pages = (per_cpu_buffer + page_size - 1) / page_size;
+    let n_pages = 2usize.pow((n_pages as f64).log2().ceil() as u32);
+    let n_pages = n_pages + 1;
+    n_pages * page_size
+}
+
+impl RingReader for PerfEventRing {
+    fn load_head(&self) { self.ring_reader.load_head() }
+    fn size(&self) -> usize { self.ring_reader.size() }
+    fn remaining(&self) -> usize { self.ring_reader.remaining() }
+    fn write_tail(&self) { self.ring_reader.load_head() }
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+        self.ring_reader.read(buf)
+    }
+}
+
+// PERF_BIT_WATERMARK value referenced by https://go.googlesource.com/sys/+/054c452bb702e465e95ce8e7a3d9a6cf0cd1188d/unix/ztypes_linux_ppc64le.go?pli=1#999
+const PERF_BIT_WATERMARK: i32 = 0x4000;
+
+fn create_perf_event(cpu: c_int, watermark: c_int) -> io::Result<c_int> {
+    let mut watermark = watermark;
+    if watermark == 0 {
+        watermark = 1;
     }
 
-    // Load head method
+    let attr = PerfEventAttr {
+        kind: PERF_TYPE_SOFTWARE as u32,
+        sample_type: PERF_SAMPLE_RAW as u64,
+        config: PERF_COUNT_SW_BPF_OUTPUT as u64,
+        bits: PERF_BIT_WATERMARK as u64,
+        wakeup: watermark as u32,
+        ..Default::default()
+    };
+
+    unsafe {
+        let fd = sys_perf_event_open(&attr, -1 as pid_t, cpu as _, -1, PERF_FLAG_FD_CLOEXEC);
+        Ok(fd)
+    }
+}
+
+
+struct ForwardReader {
+    meta: *const c_void,
+    head: AtomicU64,
+    tail: AtomicU64,
+    mask: u64,
+    ring: Vec<u8>,
+}
+
+impl RingReader for ForwardReader {
     fn load_head(&self) {
-        // Load head pointer
-        unimplemented!()
+        let head = unsafe { *(self.meta as *const u64) };
+        self.head.store(head, Ordering::Relaxed);
     }
 
-    // Write tail method
-    fn write_tail(&self) {
-        // Write tail pointer
-        unimplemented!()
-    }
-
-    // Size method
     fn size(&self) -> usize {
-        // Return size of the ring buffer
-        unimplemented!()
+        self.ring.len()
     }
 
-    // Remaining method
-    fn remaining(&self) -> i32 {
-        // Return remaining space in the ring buffer
-        unimplemented!()
+    fn remaining(&self) -> usize {
+        ((self.head.load(Ordering::Relaxed) - self.tail.load(Ordering::Relaxed)) & self.mask) as usize
+    }
+
+    fn write_tail(&self) {
+        let tail = self.tail.load(Ordering::Relaxed);
+        unsafe {
+            *((self.meta as usize + std::mem::size_of::<u64>()) as *mut u64) = tail;
+        }
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
+        let start = (self.tail.load(Ordering::Relaxed) & self.mask) as usize;
+        let mut n = buf.len();
+        let remainder = self.ring.capacity() - start;
+        if n > remainder {
+            n = remainder;
+        }
+        let head = self.head.load(Ordering::Relaxed) as usize;
+        let remainder = head - start;
+        if n > remainder {
+            n = remainder;
+        }
+
+        buf[..n].copy_from_slice(&self.ring[start..start + n]);
+        self.tail.fetch_add(n as u64, Ordering::Relaxed);
+
+        if self.tail.load(Ordering::Relaxed) == head as u64 {
+            return Ok(n);
+        }
+
+        Ok(n)
     }
 }

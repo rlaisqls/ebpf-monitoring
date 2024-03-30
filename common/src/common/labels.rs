@@ -74,7 +74,7 @@ impl FromStr for Labels {
         for pair in pairs {
             let parts: Vec<&str> = pair.split('=').collect();
             if parts.len() != 2 {
-                return Err(());
+                return bail!(());
             }
             let name = parts[0].trim();
             let value = parts[1].trim_matches('"');

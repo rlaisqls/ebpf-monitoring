@@ -56,16 +56,16 @@ fn register(r: Registration, registered: &mut HashMap<String, Registration>, par
 fn parse_component_name(name: &str) -> Result<ParsedName, String> {
     let parts: Vec<&str> = name.split('.').collect();
     if parts.is_empty() {
-        return Err("missing name".to_string());
+        return bail!("missing name".to_string());
     }
 
     let identifier_regex = Regex::new(r"^[A-Za-z][0-9A-Za-z_]*$").unwrap();
     for part in &parts {
         if part.is_empty() {
-            return Err("found empty identifier".to_string());
+            return bail!("found empty identifier".to_string());
         }
         if !identifier_regex.is_match(part) {
-            return Err(format!("identifier {} is not valid", part));
+            return bail!(format!("identifier {} is not valid", part));
         }
     }
     Ok(parts.iter().map(|s| s.to_string().collect()))

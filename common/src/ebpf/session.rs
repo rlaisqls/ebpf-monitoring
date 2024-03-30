@@ -9,7 +9,6 @@ use std::ptr::null;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-use polling::{Event, Poller};
 use anyhow::bail;
 use byteorder::ReadBytesExt;
 use gimli::{LittleEndian};
@@ -26,7 +25,8 @@ use crate::ebpf;
 use crate::ebpf::cpuonline;
 use crate::ebpf::metrics::metrics::Metrics;
 use crate::ebpf::perf_event::PerfEvent;
-use crate::ebpf::sd::target::{Target, TargetFinder};
+use crate::ebpf::reader::Reader;
+use crate::ebpf::sd::target::{Target, TargetFinder, TargetsOptions};
 use crate::ebpf::session::profile::profile_bss_types::sample_key;
 use crate::ebpf::symtab::elf_cache::ElfCacheDebugInfo;
 use crate::ebpf::symtab::gcache::GCacheDebugInfo;
@@ -131,8 +131,9 @@ impl Session {
             session_options.metrics.symtab.clone()
         )?;
 
-        let mut skel_builder = ProfileSkelBuilder::default();
         bump_memlock_rlimit()?;
+
+        let mut skel_builder = ProfileSkelBuilder::default();
         let mut open_skel = skel_builder.open()?;
 
         Ok(Self {
@@ -151,7 +152,7 @@ impl Session {
 
         let mut skel = self.bpf.load()?;
         skel.attach()?;
-        let events_reader = perf::Reader::new(&self.bpf.maps_mut().events(), 4 * page_size::get())?;
+        let events_reader = Reader::new(&self.bpf.maps_mut().events(), 4 * page_size::get())?;
         self.perf_events = attach_perf_events(self.options.sample_rate, &self.bpf.links.do_perf_event)?;
 
         if let Err(err) = self.link_kprobes() {
@@ -172,7 +173,7 @@ impl Session {
         self.started = true;
         let mut threads = Vec::with_capacity(4);
         for f in vec![
-            move || self.read_events(events_reader, pid_info_request_tx, pid_exec_request_tx, dead_pid_events_tx),
+            move || self.read_events(pid_info_request_tx, pid_exec_request_tx, dead_pid_events_tx),
             move || self.process_pid_info_requests(),
             move || self.process_dead_pids_events(),
             move || self.process_pid_exec_requests(),
@@ -289,12 +290,11 @@ impl Session {
 
     fn read_events(
         &self,
-        events: dyn Reader,
         pid_config_request: Sender<u32>,
         pid_exec_request: Sender<u32>,
         dead_pids_events: Sender<u32>,
     ) {
-        for record in events {
+        for record in self.events_reader {
             match record {
                 Ok(record) => {
                     if record.lost_samples != 0 {
@@ -520,11 +520,11 @@ fn bump_memlock_rlimit() -> Result<()> {
 }
 
 // https://github.com/torvalds/linux/blob/928a87efa42302a23bb9554be081a28058495f22/samples/bpf/trace_event_user.c#L152
-fn attach_perf_events(sample_rate: i32, prog: &mut Program) -> Result<Vec<PerfEvent>> {
+fn attach_perf_events(sample_rate: u64, prog: &mut Program) -> Result<Vec<PerfEvent>> {
     let cpus = cpuonline::get()?;
     let mut perf_events = Vec::new();
     for cpu in cpus {
-        let mut pe = PerfEvent::new(cpu as usize as i32, sample_rate)?;
+        let mut pe = PerfEvent::new(cpu as i32, sample_rate)?;
         perf_events.push(pe);
 
         if let Err(err) = pe.attach_perf_event(prog) {

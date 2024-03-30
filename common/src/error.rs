@@ -15,7 +15,9 @@ pub enum Error {
     #[error("end of ring")]
     UnexpectedEof,
     #[error("Unknown event: {0}")]
-    UnknownEvent(u32)
+    UnknownEvent(u32),
+    #[error("OS Error: {0}")]
+    OSError(String)
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

@@ -162,7 +162,7 @@ impl TargetFinder {
         cache.pop(&pid);
     }
 
-    fn update(&mut self, args: TargetsOptions) {
+    pub(crate) fn update(&mut self, args: TargetsOptions) {
         let mut guard = self.sync.lock().unwrap();
         self.set_targets(&args);
         self.resize_container_id_cache(args.container_cache_size);

@@ -9,7 +9,7 @@ use nix::sys::epoll::{
 use nix::sys::eventfd::EfdFlags;
 use nix::unistd::close;
 
-struct Poller {
+pub struct Poller {
     epoll_fd: RawFd,
     event: Arc<Mutex<EventFd>>,
 }
@@ -57,7 +57,7 @@ impl Poller {
     }
 }
 
-struct EventFd {
+pub struct EventFd {
     fd: RawFd,
 }
 
