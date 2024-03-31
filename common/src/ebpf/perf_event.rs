@@ -1,7 +1,7 @@
 use std::{io, os};
 use std::os::unix::io::RawFd;
-use anyhow::bail;
 
+use anyhow::bail;
 use aya::programs::perf_event::perf_sw_ids::PERF_COUNT_SW_CPU_CLOCK;
 use libbpf_rs::{Link, Program};
 use libbpf_rs::libbpf_sys::{PERF_FLAG_FD_CLOEXEC, PERF_SAMPLE_CPU, PERF_TYPE_SOFTWARE};
@@ -50,15 +50,10 @@ impl PerfEvent {
             ..Default::default()
         };
 
-        let fd = sys_perf_event_open(&attr, -1 as pid_t, cpu as _, -1, PERF_FLAG_FD_CLOEXEC);
-        if fd < 0 {
-            let err = io::Error::from_raw_os_error(-fd).raw_os_error();
-            if err? == libc::EINVAL {
-                info!("Your profiling frequency might be too high; try lowering it");
-            }
-            bail!(OSError(err.to_string()));
+        unsafe {
+            let fd = sys_perf_event_open(&attr, -1 as pid_t, cpu as _, -1, PERF_FLAG_FD_CLOEXEC);
+            Ok(PerfEvent { fd, ..Default::default() })
         }
-        Ok(PerfEvent { fd, ..Default::default() })
     }
 
     fn close(&mut self) -> Result<()> {

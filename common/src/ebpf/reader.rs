@@ -259,7 +259,7 @@ trait RingReader {
     fn size(&self) -> usize;
     fn remaining(&self) -> usize;
     fn write_tail(&self);
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error>;
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error>;
 }
 
 struct PerfEventRing {
@@ -270,7 +270,6 @@ struct PerfEventRing {
 }
 
 impl PerfEventRing {
-
     fn new(cpu: i32, per_cpu_buffer: i32, watermark: i32) -> io::Result<Self> {
         if watermark >= per_cpu_buffer {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "watermark must be smaller than per_cpu_buffer"));
