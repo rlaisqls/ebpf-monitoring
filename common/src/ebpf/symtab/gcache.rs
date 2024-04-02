@@ -120,8 +120,8 @@ pub struct Entry<V> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct GCacheOptions {
-    size: usize,
-    keep_rounds: i32,
+    pub size: usize,
+    pub keep_rounds: i32,
 }
 
 impl Default for GCacheOptions {

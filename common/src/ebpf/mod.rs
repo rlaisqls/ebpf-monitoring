@@ -6,10 +6,10 @@ pub mod dwarfdump;
 pub mod session;
 pub mod pprof;
 pub mod sync;
-mod wait_group;
-mod reader;
-mod perf_event;
-mod epoll;
+pub mod wait_group;
+pub mod reader;
+pub mod perf_event;
+pub mod epoll;
 
 pub(crate) const PERF_EVENT_IOC_ENABLE: core::ffi::c_int = 9216;
 pub(crate) const PERF_EVENT_IOC_DISABLE: core::ffi::c_int = 9217;

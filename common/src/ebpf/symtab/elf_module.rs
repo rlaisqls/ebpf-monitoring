@@ -27,15 +27,15 @@ pub struct ElfTableOptions {
 }
 
 pub struct SymbolOptions {
-    go_table_fallback: bool,
-    python_full_file_path: bool
+    pub go_table_fallback: bool,
+    pub python_full_file_path: bool
 }
 
 impl Default for SymbolOptions {
     fn default() -> Self {
         Self {
             go_table_fallback: false,
-            python_full_file_path: true
+            python_full_file_path: false
         }
     }
 }

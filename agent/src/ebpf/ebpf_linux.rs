@@ -3,18 +3,25 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use std::collections::HashMap;
+use std::fs::File;
 use tokio::time::interval;
 use futures::future::join_all;
-use common::ebpf::sd::target::{Target, TargetFinder};
-use common::ebpf::session::{Session, SessionDebugInfo};
+use common::ebpf::pprof;
+use common::ebpf::sd::target::{TargetFinder, TargetsOptions};
+use common::ebpf::session::{DiscoveryTarget, Session, SessionDebugInfo, SessionOptions};
+use common::ebpf::symtab::elf_module::SymbolOptions;
+use common::ebpf::symtab::gcache::GCacheOptions;
+use common::ebpf::symtab::symbols::CacheOptions;
 
-use crate::appender::{Appendable, Fanout};
+use crate::appender::{Appendable, Fanout, RawSample};
+use crate::common::component::Component;
 use crate::common::registry::Options;
 
-// Define the component's arguments structure
-#[derive(Debug)]
+type Target = HashMap<String, String>;
+#[derive(Debug, Copy, Clone)]
 pub struct Arguments {
-    pub forward_to: Vec<dyn Appendable>,
+    pub forward_to: Arc<Vec<dyn Appendable>>,
     pub targets: Option<Vec<Target>>,
     pub collect_interval: Option<Duration>,
     pub sample_rate: Option<i32>,
@@ -25,13 +32,12 @@ pub struct Arguments {
     pub cache_rounds: Option<i32>,
     pub collect_user_profile: Option<bool>,
     pub collect_kernel_profile: Option<bool>,
-    pub demangle: Option<String>,
     pub python_enabled: Option<bool>,
 }
 
 // Define the component structure
 #[derive(Debug)]
-pub struct Component<'a> {
+pub struct EbpfLinuxComponent<'a> {
     options: Options,
     args: Arguments,
     target_finder: TargetFinder,
@@ -45,24 +51,9 @@ struct DebugInfo {
     session: SessionDebugInfo
 }
 
-// Implement methods for the component
-impl Component {
-    // Create a new instance of the component
-    pub async fn new(opts: Options, args: Arguments) -> Result<Self, Box<dyn std::error::Error>> {
-        let target_finder = TargetFinder::new("/");
-        let session = Session::new(&target_finder, convert_session_options(&args)).unwrap();
+impl Component for EbpfLinuxComponent {
 
-        Ok(Self {
-            options: opts,
-            args,
-            target_finder,
-            session,
-            appendable: Fanout::new(args.forward_to, opts.id, opts.registerer),
-        })
-    }
-
-    // Start the component's main loop
-    pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut interval = interval(self.args.collect_interval.unwrap_or_else(|| Duration::from_secs(15)));
 
         loop {
@@ -86,37 +77,48 @@ impl Component {
     }
 
     // Update the component's arguments
-    pub fn update(&mut self, args: Arguments) {
+    fn update(&mut self, args: Arguments) {
         self.args = args;
-        self.session.update_targets(&targets_option_from_args(&self.args));
+        self.session.update_targets(targets_option_from_args(&self.args));
         self.appendable.update_children(&self.args.forward_to);
     }
+}
 
-    // Collect profiles
+// Implement methods for the component
+impl EbpfLinuxComponent {
+    // Create a new instance of the component
+    pub async fn new(opts: Options, args: Arguments) -> Result<Self, Box<dyn std::error::Error>> {
+        let target_finder = TargetFinder::new(
+            1024,
+            File::open("/").unwrap()
+        );
+        let session = Session::new(&target_finder, convert_session_options(&args)).unwrap();
+
+        Ok(Self {
+            options: opts.clone(),
+            args,
+            target_finder,
+            session,
+            appendable: Fanout::new(args.forward_to, opts.id, opts.registerer),
+            debug_info: DebugInfo { targets: vec![], session: Default::default() },
+        })
+    }
+
+    // CollectProfiles
     async fn collect_profiles(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut builders = Vec::new();
+        let mut builders = pprof::ProfileBuilders::new(1000);
         pprof::collect(&mut builders, &self.session).await?;
-        let mut tasks = Vec::new();
 
-        for builder in builders {
-            let appender = self.appendable.appender();
-            let args = self.args.clone();
-            tasks.push(tokio::spawn(async move {
-                let profile_data = builder.write()?;
-                let service_name = builder.labels().get("service_name").unwrap_or_default();
-                let samples = vec![Arc::new(RawSample::new(profile_data))];
-                appender.append(samples, service_name, args.id).await?;
-                Ok::<_, Box<dyn std::error::Error>>(())
-            }));
+        for (_, builder) in builders.builders {
+            let service_name = builder.labels.get();
         }
 
-        join_all(tasks).await.into_iter().collect::<Result<(), Box<dyn std::error::Error>>>()?;
         Ok(())
     }
 
     // Update debug information
     fn update_debug_info(&mut self) {
-        let debug_info = EbpfDebugInfo {
+        let debug_info = DebugInfo {
             targets: self.target_finder.debug_info(),
             session: self.session.debug_info(),
         };
@@ -124,43 +126,37 @@ impl Component {
     }
 }
 
-// Convert session options
-fn convert_session_options(args: &Arguments) -> ebpf::SessionOptions {
-    let mut session_options = ebpf::SessionOptions::default();
-    session_options.collect_user = args.collect_user_profile.unwrap_or(true);
-    session_options.collect_kernel = args.collect_kernel_profile.unwrap_or(true);
-    session_options.sample_rate = args.sample_rate.unwrap_or(97);
-    session_options.python_enabled = args.python_enabled.unwrap_or(true);
-
-    let symbol_options = symtab::SymbolOptions {
-        go_table_fallback: false,
-        demangle_options: demangle2::convert_demangle_options(args.demangle.as_ref().map(|s| s.as_str())),
-    };
-
-    session_options.symbol_options = symbol_options;
-
-    let cache_options = symtab::CacheOptions {
-        pid_cache_options: symtab::GCacheOptions {
-            size: args.pid_cache_size.unwrap_or(32),
-            keep_rounds: args.cache_rounds.unwrap_or(3),
+fn convert_session_options(args: &Arguments) -> SessionOptions {
+    let keep_rounds = args.cache_rounds.unwrap_or(3);
+    SessionOptions {
+        collect_user: args.collect_user_profile.unwrap_or(true),
+        collect_kernel: args.collect_kernel_profile.unwrap_or(true),
+        sample_rate: args.sample_rate.unwrap_or(97) as u32,
+        python_enabled: args.python_enabled.unwrap_or(true),
+        cache_options: CacheOptions {
+            pid_cache_options: GCacheOptions {
+                size: args.pid_cache_size.unwrap_or(32) as usize,
+                keep_rounds
+            },
+            build_id_cache_options: GCacheOptions {
+                size: args.build_id_cache_size.unwrap_or(64) as usize,
+                keep_rounds
+            },
+            same_file_cache_options: GCacheOptions {
+                size: args.same_file_cache_size.unwrap_or(8) as usize,
+                keep_rounds
+            },
+            symbol_options: SymbolOptions::default()
         },
-        build_id_cache_options: symtab::GCacheOptions {
-            size: args.build_id_cache_size.unwrap_or(64),
-            keep_rounds: args.cache_rounds.unwrap_or(3),
-        },
-        same_file_cache_options: symtab::GCacheOptions {
-            size: args.same_file_cache_size.unwrap_or(8),
-            keep_rounds: args.cache_rounds.unwrap_or(3),
-        },
-    };
-
-    session_options.cache_options = cache_options;
-
-    session_options
+        ..Default::default()
+    }
 }
 
-// Convert targets options from arguments
-fn targets_option_from_args(args: &Arguments) -> discovery::TargetsOptions {
-    let targets = args.targets.as_ref().map(|t| {
-        t.iter().map(|target| {
-            let entry = DirEntry::new();
+fn targets_option_from_args(args: &Arguments) -> TargetsOptions {
+    TargetsOptions {
+        targets: args.clone().targets.unwrap_or_default(),
+        targets_only: true,
+        container_cache_size: args.container_id_cache_size.unwrap_or_default() as usize,
+        ..Default::default()
+    }
+}

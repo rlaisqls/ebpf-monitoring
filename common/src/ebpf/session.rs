@@ -2,17 +2,19 @@ use std::{collections::HashMap, default, os, sync::{Arc, Mutex}, thread};
 use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
+use std::hash::Hash;
 use std::io::Cursor;
 use std::ops::Deref;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::ptr::null;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use anyhow::bail;
+use aya::util;
 use byteorder::ReadBytesExt;
 use gimli::{LittleEndian};
-use libbpf_rs::{Link, Program};
+use libbpf_rs::{Error, libbpf_sys, Link, Map, Program};
 use libbpf_rs::libbpf_sys::{__u32, bpf_map_batch_opts, BPF_MAP_LOOKUP_AND_DELETE_BATCH, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use log::{debug, error};
@@ -47,14 +49,14 @@ Box<dyn Fn(Target, Vec<String>, u64, u32, bool) + Send + 'static>;
 
 #[derive(Clone)]
 pub struct SessionOptions {
-    collect_user: bool,
-    collect_kernel: bool,
-    unknown_symbol_module_offset: bool,
-    unknown_symbol_address: bool,
-    python_enabled: bool,
-    cache_options: CacheOptions,
-    metrics: Arc<Metrics>,
-    sample_rate: u32,
+    pub collect_user: bool,
+    pub collect_kernel: bool,
+    pub unknown_symbol_module_offset: bool,
+    pub unknown_symbol_address: bool,
+    pub python_enabled: bool,
+    pub cache_options: CacheOptions,
+    pub metrics: Arc<Metrics>,
+    pub sample_rate: u32,
 }
 
 impl Default for SessionOptions {
@@ -77,7 +79,7 @@ enum SampleAggregation {
     SampleNotAggregated,
 }
 
-type DiscoveryTarget = HashMap<String, String>;
+pub type DiscoveryTarget = HashMap<String, String>;
 
 #[derive(Default)]
 struct Pids {
@@ -125,7 +127,7 @@ pub struct Session<'a> {
 }
 
 impl Session {
-    pub fn new(target_finder: Arc<TargetFinder>, session_options: SessionOptions) -> Result<Self> {
+    pub fn new(target_finder: &TargetFinder, session_options: SessionOptions) -> Result<Self> {
         let sym_cache = SymbolCache::new(
             session_options.cache_options,
             session_options.metrics.symtab.clone()
@@ -153,7 +155,7 @@ impl Session {
         let mut skel = self.bpf.load()?;
         skel.attach()?;
         let events_reader = Reader::new(&self.bpf.maps_mut().events(), 4 * page_size::get())?;
-        self.perf_events = attach_perf_events(self.options.sample_rate, &self.bpf.links.do_perf_event)?;
+        self.perf_events = attach_perf_events(self.options.sample_rate, &self.bpf.links.do_perf_event.take().unwrap())?;
 
         if let Err(err) = self.link_kprobes() {
             self.stop_locked();
@@ -206,7 +208,7 @@ impl Session {
         Ok(())
     }
 
-    fn update_targets(&mut self, args: TargetsOptions) {
+    pub fn update_targets(&mut self, args: TargetsOptions) {
         self.target_finder.update(args);
         let _guard = self.mutex.lock().unwrap();
         for pid in self.pids.unknown.iter() {
@@ -244,17 +246,17 @@ impl Session {
 
     fn collect_regular_profile(&mut self, cb: CollectProfilesCallback) -> Result<(), String> {
         let mut sb = StackBuilder::new();
-        let mut known_stacks = HashSet::new();
+        let mut known_stacks: HashMap<u32, bool> = HashMap::new();
         let (keys, values, batch) = self.get_counts_map_values()?;
 
         for (i, ck) in keys.iter().enumerate() {
             let value = values[i];
 
             if ck.user_stack >= 0 {
-                known_stacks.insert(ck.user_stack as u32);
+                known_stacks.insert(ck.user_stack as u32, true);
             }
             if ck.kern_stack >= 0 {
-                known_stacks.insert(ck.kern_stack as u32);
+                known_stacks.insert(ck.kern_stack as u32, true);
             }
             if let Some(labels) = self.target_finder.find_target(ck.pid) {
                 if !self.pids.dead.contains(&ck.pid) {
@@ -282,8 +284,8 @@ impl Session {
             }
         }
 
-        self.clear_counts_map(keys, batch)?;
-        self.clear_stacks_map(known_stacks)?;
+        self.clear_counts_map(&keys, batch)?;
+        self.clear_stacks_map(&known_stacks)?;
 
         Ok(())
     }
@@ -419,7 +421,7 @@ impl Session {
         Ok(())
     }
 
-    fn get_counts_map_values(&mut self) -> Result<(Vec<sample_key>, Vec<u32>, bool), String> {
+    fn get_counts_map_values(&mut self) -> Result<([sample_key], [u32], bool), String> {
         let m = &self.bpf.maps().counts();
         let map_size = m.max_entries();
         let mut keys: [sample_key] = Vec::with_capacity(map_size);
@@ -446,10 +448,10 @@ impl Session {
                 return Ok((keys[..n].to_vec(), values[..n].to_vec(), true));
             }
 
-            let mut result_keys: Vec<u8> = Vec::new();
-            let mut result_values: Vec<u32> = Vec::new();
+            let mut result_keys: [sample_key] = Vec::with_capacity(map_size);
+            let mut result_values: [u32] = Vec::with_capacity(map_size);
             let mut it = m.iterate();
-            while let Some((k, v)) = it.next() {
+            while let Some((&k, &v)) = it.next() {
                 result_keys.push(k);
                 result_values.push(v);
             }
@@ -458,7 +460,7 @@ impl Session {
         }
     }
 
-    fn clear_counts_map(&mut self, keys: &[u8], batch: bool) -> Result<(), String> {
+    fn clear_counts_map(&mut self, keys: &[sample_key], batch: bool) -> Result<(), String> {
         if keys.is_empty() {
             return Ok(());
         }
@@ -467,9 +469,21 @@ impl Session {
             return Ok(());
         }
         let m = &self.bpf.maps().counts();
-        m.delete(keys)?;
-        println!("clearCountsMap count: {}", keys.len());
-        Ok(())
+
+        // m.delete(keys)?;
+        let ret = unsafe {
+            libbpf_sys::bpf_map_delete_elem(
+                OwnedFd::from(m).as_raw_fd(),
+                keys.as_ptr() as *const c_void
+            )
+        };
+        if ret < 0 {
+            // Error code is returned negative, flip to positive to match errno
+            Err(Error::from_raw_os_error(-ret).to_string())
+        } else {
+            println!("clearCountsMap count: {}", keys.len());
+            Ok(())
+        }
     }
 
     fn clear_stacks_map(&mut self, known_keys: &HashMap<u32, bool>) -> Result<(), String> {
@@ -520,14 +534,14 @@ fn bump_memlock_rlimit() -> Result<()> {
 }
 
 // https://github.com/torvalds/linux/blob/928a87efa42302a23bb9554be081a28058495f22/samples/bpf/trace_event_user.c#L152
-fn attach_perf_events(sample_rate: u64, prog: &mut Program) -> Result<Vec<PerfEvent>> {
+fn attach_perf_events(sample_rate: u32, link: &Link) -> Result<Vec<PerfEvent>> {
     let cpus = cpuonline::get()?;
     let mut perf_events = Vec::new();
     for cpu in cpus {
-        let mut pe = PerfEvent::new(cpu as i32, sample_rate)?;
+        let mut pe = PerfEvent::new(cpu as i32, sample_rate as u64)?;
         perf_events.push(pe);
 
-        if let Err(err) = pe.attach_perf_event(prog) {
+        if let Err(err) = pe.attach_perf_event(link) {
             return Err(InvalidData(format!("{:?}", err)));
         }
     }
@@ -574,36 +588,3 @@ impl StackResolveStats {
         self.unknown_modules += other.unknown_modules;
     }
 }
-//
-// #[test]
-// fn ring_buf_epoll_wakeup() {
-//     let RingBufTest {
-//         mut ring_buf,
-//         _bpf,
-//         regs: _,
-//     } = RingBufTest::new();
-//
-//     let epoll_fd = epoll::create(false).unwrap();
-//     epoll::ctl(
-//         epoll_fd,
-//         epoll::ControlOptions::EPOLL_CTL_ADD,
-//         ring_buf.as_raw_fd(),
-//         // The use of EPOLLET is intentional. Without it, level-triggering would result in
-//         // more notifications, and would mask the underlying bug this test reproduced when
-//         // the synchronization logic in the RingBuf mirrored that of libbpf. Also, tokio's
-//         // AsyncFd always uses this flag (as demonstrated in the subsequent test).
-//         epoll::Event::new(epoll::Events::EPOLLIN | epoll::Events::EPOLLET, 0),
-//     )
-//         .unwrap();
-//     let mut epoll_event_buf = [epoll::Event::new(epoll::Events::EPOLLIN, 0); 1];
-//     let mut total_events: u64 = 0;
-//     let writer = WriterThread::spawn();
-//     while total_events < WriterThread::NUM_MESSAGES {
-//         epoll::wait(epoll_fd, -1, &mut epoll_event_buf).unwrap();
-//         while let Some(read) = ring_buf.next() {
-//             assert_eq!(read.len(), 8);
-//             total_events += 1;
-//         }
-//     }
-//     writer.join();
-// }

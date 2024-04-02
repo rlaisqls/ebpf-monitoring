@@ -12,20 +12,19 @@ use log::{debug, warn};
 
 use crate::common::labels::Labels;
 use crate::ebpf::sd::container_id::container_id_from_target;
+use crate::ebpf::session::DiscoveryTarget;
 
 pub const LABEL_CONTAINER_ID: &str = "__container_id__";
-const METRIC_NAME: &str = "__name__";
+pub const METRIC_NAME: &str = "__name__";
 const LABEL_PID: &str = "__process_pid__";
 const LABEL_SERVICE_NAME: &str = "service_name";
 const LABEL_SERVICE_NAME_K8S: &str = "__meta_kubernetes_pod_annotation_iwm_io_service_name";
 const METRIC_VALUE: &str = "process_cpu";
 const RESERVED_LABEL_PREFIX: &str = "__";
 
-pub(crate) type DiscoveryTarget = HashMap<String, String>;
-
 #[derive(Debug)]
 pub struct Target {
-    labels: Labels,
+    pub labels: Labels,
     service_name: String,
     fingerprint: u64,
     fingerprint_calculated: bool,
@@ -110,11 +109,11 @@ fn infer_service_name(target: DiscoveryTarget) -> String {
 }
 
 
-pub(crate) struct TargetsOptions {
-    targets: Vec<DiscoveryTarget>,
-    targets_only: bool,
+pub struct TargetsOptions {
+    pub targets: Vec<DiscoveryTarget>,
+    pub targets_only: bool,
     default_target: DiscoveryTarget,
-    container_cache_size: usize,
+    pub container_cache_size: usize,
 }
 
 pub struct TargetFinder {
@@ -127,7 +126,7 @@ pub struct TargetFinder {
 }
 
 impl TargetFinder {
-    fn new(container_cache_size: usize, fs: File) -> TargetFinder {
+    pub fn new(container_cache_size: usize, fs: File) -> TargetFinder {
         TargetFinder {
             cid2target: HashMap::new(),
             pid2target: HashMap::new(),

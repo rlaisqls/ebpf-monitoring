@@ -2,12 +2,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
+use anyhow::bail;
 
 // Define the Label struct
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Label {
-    name: String,
-    value: String,
+    pub name: String,
+    pub value: String,
 }
 
 impl Label {
@@ -45,10 +46,23 @@ impl Labels {
                 .collect()
         )
     }
+    pub fn get(&self, name: &str) -> Option<String> {
+        let mut map = HashMap::new();
+        for label in &self.0 {
+            map.insert(label.name.clone(), label.value.clone());
+        }
+        map[name.to_string()]
+    }
+    pub fn set(&mut self, name: &str, value: &str) {
+        if self.get(name).is_some() {
+            self.0.iter().retain(|&l| l.name == name);
+        }
+        self.0.push(Label { name, value })
+    }
     fn len(&self) -> usize {
         self.0.len()
     }
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }

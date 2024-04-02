@@ -1,4 +1,5 @@
 use std::{io, os};
+use std::os::fd::AsFd;
 use std::os::unix::io::RawFd;
 
 use anyhow::bail;
@@ -66,15 +67,15 @@ impl PerfEvent {
         Ok(())
     }
 
-    pub(crate) fn attach_perf_event(&mut self, prog: &mut Program) -> Result<(), io::Error> {
-        match prog.attach_perf_event(self.fd) {
+    pub(crate) fn attach_perf_event(&mut self, link: &Link) -> Result<(), io::Error> {
+        match link.attach_perf_event(self.fd) {
             Ok(_) => Ok(()),
-            Err(_) => self.attach_perf_event_ioctl(prog),
+            Err(_) => self.attach_perf_event_ioctl(link),
         }
     }
 
-    fn attach_perf_event_ioctl(&mut self, prog: &Program) -> Result<(), io::Error> {
-        let err = unsafe { libc::ioctl(self.fd, PERF_EVENT_IOC_SET_BPF as c_ulong, prog.fd()) };
+    fn attach_perf_event_ioctl(&mut self, link: &Link) -> Result<(), io::Error> {
+        let err = unsafe { libc::ioctl(self.fd, PERF_EVENT_IOC_SET_BPF as c_ulong, link.as_fd()) };
         if err == -1 {
             return Err(io::Error::last_os_error());
         }

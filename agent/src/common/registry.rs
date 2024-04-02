@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
+use anyhow::bail;
 use prometheus_client::registry;
 use regex::Regex;
 
@@ -19,11 +20,10 @@ type ExportFunc = fn(exports: &mut HashMap<String, Box<dyn Any>>);
 
 pub struct Options {
     module_controller: Box<dyn ModuleController>,
-    id: String,
+    pub(crate) id: String,
     data_path: String, // A path to a directory with this component may use for storage.
     on_state_change: fn(exports: Exports), // OnStateChange may be invoked at any time by a component whose Export value changes.
-    registerer: Arc<dyn registry>,
-    tracer: Arc<()>,
+    pub(crate) registerer: Arc<dyn registry>,
     get_service_data: fn(name: &str) -> Result<Box<dyn Any>, String>,
 }
 

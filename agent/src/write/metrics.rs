@@ -1,5 +1,5 @@
 use prometheus::{CounterVec};
-use crate::common::label::Labels;
+use common::common::labels::Labels;
 
 struct Metrics {
     sent_bytes: CounterVec,

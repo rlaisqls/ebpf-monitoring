@@ -21,3 +21,9 @@ tonic = "0.11.0"
 tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros"] }
 regex = "1.10.3"
 common = {path = "../common"}
+url = "2.5.0"
+sha2 = "0.10.8"
+reqwest = "0.12.2"
+
+[build-dependencies]
+tonic-build = "0.11.0"

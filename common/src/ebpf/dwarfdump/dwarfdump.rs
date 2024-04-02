@@ -14,6 +14,7 @@ impl Typ {
         self.fields.iter().find(|field| field.name == name)
     }
 }
+
 #[derive(Debug)]
 struct Field {
     name: String,

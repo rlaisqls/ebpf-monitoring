@@ -15,6 +15,7 @@ use prost::Message;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use tonic::transport::Channel;
+use common::error::Result;
 use crate::common::registry::{Exports, Options};
 
 use push_api::pusher_service_client::PusherServiceClient;
@@ -123,7 +124,11 @@ impl Component for WriteComponent {
         // Assuming level.Debug and Log are part of a logging library
         debug!(self.opts.logger, "updating iwm.write config"; "old" => format!("{:?}", self.cfg), "new" => format!("{:?}", new_config));
 
-        let receiver = FanOutClient::new(&self.opts, new_cfg, &self.metrics).await.unwrap();
+        let receiver = FanOutClient::new(
+            &self.opts,
+            new_cfg,
+            &self.metrics
+        ).await.unwrap();
         self.opts.on_state_change(Box::new(receiver));
         Ok(())
     }
