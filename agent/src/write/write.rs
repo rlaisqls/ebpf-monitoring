@@ -20,61 +20,23 @@ use crate::common::registry::{Exports, Options};
 
 use push_api::pusher_service_client::PusherServiceClient;
 use push_api::{PushRequest, PushResponse};
+use crate::appender::Fanout;
+use crate::write::metrics::Metrics;
 
 pub mod push_api {
-    include!("../push/push.v1.rs");
+    include!("../api/push/push.v1.rs");
 }
 
-#[derive(Debug)]
-struct Metrics {
-    sent_bytes: CounterVec,
-    dropped_bytes: CounterVec,
-    sent_profiles: CounterVec,
-    dropped_profiles: CounterVec,
-    retries: CounterVec,
-}
-
-impl Metrics {
-    fn new() -> Self {
-        Self {
-            sent_bytes: register_counter_vec!(
-                "iwm_write_sent_bytes_total",
-                "Total number of compressed bytes sent to Pyroscope.",
-                &["endpoint"]
-            ).unwrap(),
-            dropped_bytes: register_counter_vec!(
-                "iwm_write_dropped_bytes_total",
-                "Total number of compressed bytes dropped by Pyroscope.",
-                &["endpoint"]
-            ).unwrap(),
-            sent_profiles: register_counter_vec!(
-                "iwm_write_sent_profiles_total",
-                "Total number of profiles sent to Pyroscope.",
-                &["endpoint"]
-            ).unwrap(),
-            dropped_profiles: register_counter_vec!(
-                "iwm_write_dropped_profiles_total",
-                "Total number of profiles dropped by Pyroscope.",
-                &["endpoint"]
-            ).unwrap(),
-            retries: register_counter_vec!(
-                "iwm_write_retries_total",
-                "Total number of retries to Pyroscope.",
-                &["endpoint"]
-            ).unwrap(),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
-struct EndpointOptions {
-    name: String,
-    url: String,
-    remote_timeout: Duration,
-    headers: HashMap<String, String>,
-    min_backoff: Duration,
-    max_backoff: Duration,
-    max_backoff_retries: usize,
+pub struct EndpointOptions {
+    pub name: String,
+    pub url: String,
+    pub remote_timeout: Duration,
+    pub headers: HashMap<String, String>,
+    pub min_backoff: Duration,
+    pub max_backoff: Duration,
+    pub max_backoff_retries: usize,
 }
 
 impl Default for EndpointOptions {
@@ -91,10 +53,10 @@ impl Default for EndpointOptions {
     }
 }
 
-#[derive(Debug)]
-struct Arguments {
-    external_labels: HashMap<String, String>,
-    endpoints: Vec<EndpointOptions>,
+#[derive(Debug, Copy, Clone)]
+pub struct Arguments {
+    pub external_labels: HashMap<String, String>,
+    pub endpoints: Vec<EndpointOptions>,
 }
 
 impl Default for Arguments {
@@ -106,11 +68,23 @@ impl Default for Arguments {
     }
 }
 
-#[derive(Debug)]
-struct WriteComponent {
+#[derive(Debug, Copy, Clone)]
+pub struct WriteComponent {
     opts: Options,
-    metrics: Arc<Metrics>,
-    cfg: Arguments
+    cfg: Arguments,
+    metrics: Arc<Metrics>
+}
+
+impl WriteComponent {
+    pub async fn new(o: Options, c: Arguments) -> Result<(dyn Component, FanOutClient)> {
+        let metrics = Metrics::new(&o.registerer);
+        let receiver = FanOutClient::new(o, c, Arc::new(metrics)).await.unwrap();
+        Ok((Component {
+            opts: o.borrow(),
+            cfg: c.borrow(),
+            metrics,
+        }, receiver))
+    }
 }
 
 impl Component for WriteComponent {
@@ -125,9 +99,9 @@ impl Component for WriteComponent {
         debug!(self.opts.logger, "updating iwm.write config"; "old" => format!("{:?}", self.cfg), "new" => format!("{:?}", new_config));
 
         let receiver = FanOutClient::new(
-            &self.opts,
+            self.opts,
             new_cfg,
-            &self.metrics
+            self.borrow().metrics
         ).await.unwrap();
         self.opts.on_state_change(Box::new(receiver));
         Ok(())
@@ -146,12 +120,10 @@ struct FanOutClient {
 impl FanOutClient {
     async fn new(opts: Options, config: Arguments, metrics: Arc<Metrics>) -> Result<Self> {
         let mut clients = Vec::with_capacity(config.endpoints.len());
-
         for endpoint in &config.endpoints {
             let client = PusherServiceClient::connect(&endpoint).await?;
             clients.push(client);
         }
-
         Ok(Self {
             clients, config, opts, metrics,
         })
@@ -166,18 +138,15 @@ impl FanOutClient {
             let mut client = client.clone();
             let config = self.config.endpoints[i].clone();
             let metrics = self.metrics.clone();
-            let req_clone = req.clone();
 
             tokio::spawn(async move {
                 loop {
-                    let result = push_to_client(&mut client, &config, &req_clone, &metrics).await;
-
+                    let result = client.push(req.clone()).await;
                     if result.is_ok() {
                         metrics.sent_bytes.with_label_values(&[&config.url]).add(req_size as f64);
                         metrics.sent_profiles.with_label_values(&[&config.url]).add(profile_count as f64);
                         break;
                     }
-
                     if let Err(err) = result {
                         log::warn!("failed to push to endpoint: {:?}", err);
                         errors.push(err.clone());

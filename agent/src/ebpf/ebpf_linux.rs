@@ -1,38 +1,41 @@
 use std::{
-    fs::DirEntry,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 use std::collections::HashMap;
 use std::fs::File;
+use log::error;
 use tokio::time::interval;
-use futures::future::join_all;
 use common::ebpf::pprof;
 use common::ebpf::sd::target::{TargetFinder, TargetsOptions};
-use common::ebpf::session::{DiscoveryTarget, Session, SessionDebugInfo, SessionOptions};
+use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
 use common::ebpf::symtab::elf_module::SymbolOptions;
 use common::ebpf::symtab::gcache::GCacheOptions;
 use common::ebpf::symtab::symbols::CacheOptions;
+use common::error::Error::{NotFound, OSError};
+use common::error::Result;
 
 use crate::appender::{Appendable, Fanout, RawSample};
 use crate::common::component::Component;
 use crate::common::registry::Options;
+use crate::ebpf::metrics::metrics;
+use crate::scrape::target::SERVICE_NAME_LABEL;
 
 type Target = HashMap<String, String>;
 #[derive(Debug, Copy, Clone)]
 pub struct Arguments {
     pub forward_to: Arc<Vec<dyn Appendable>>,
-    pub targets: Option<Vec<Target>>,
-    pub collect_interval: Option<Duration>,
-    pub sample_rate: Option<i32>,
-    pub pid_cache_size: Option<i32>,
-    pub build_id_cache_size: Option<i32>,
-    pub same_file_cache_size: Option<i32>,
-    pub container_id_cache_size: Option<i32>,
-    pub cache_rounds: Option<i32>,
-    pub collect_user_profile: Option<bool>,
-    pub collect_kernel_profile: Option<bool>,
-    pub python_enabled: Option<bool>,
+    pub targets: Vec<Target>,
+    pub collect_interval: Duration,
+    pub sample_rate: i32,
+    pub pid_cache_size: i32,
+    pub build_id_cache_size: i32,
+    pub same_file_cache_size: i32,
+    pub container_id_cache_size: i32,
+    pub cache_rounds: i32,
+    pub collect_user_profile: bool,
+    pub collect_kernel_profile: bool,
+    pub python_enabled: bool,
 }
 
 // Define the component structure
@@ -42,8 +45,10 @@ pub struct EbpfLinuxComponent<'a> {
     args: Arguments,
     target_finder: TargetFinder,
     session: Session<'a>,
+
     appendable: Fanout,
-    debug_info: DebugInfo
+    debug_info: DebugInfo,
+    metrics: metrics
 }
 
 struct DebugInfo {
@@ -52,10 +57,8 @@ struct DebugInfo {
 }
 
 impl Component for EbpfLinuxComponent {
-
-    async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut interval = interval(self.args.collect_interval.unwrap_or_else(|| Duration::from_secs(15)));
-
+    async fn run(mut self) -> Result<()> {
+        let mut interval = interval(self.args.collect_interval);
         loop {
             tokio::select! {
                 _ = interval.tick() => {
@@ -76,7 +79,6 @@ impl Component for EbpfLinuxComponent {
         }
     }
 
-    // Update the component's arguments
     fn update(&mut self, args: Arguments) {
         self.args = args;
         self.session.update_targets(targets_option_from_args(&self.args));
@@ -84,14 +86,13 @@ impl Component for EbpfLinuxComponent {
     }
 }
 
-// Implement methods for the component
 impl EbpfLinuxComponent {
-    // Create a new instance of the component
-    pub async fn new(opts: Options, args: Arguments) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(opts: Options, args: Arguments) -> Result<Self> {
         let target_finder = TargetFinder::new(
             1024,
             File::open("/").unwrap()
         );
+        let ms = metrics::new(opts.registerer.borrow());
         let session = Session::new(&target_finder, convert_session_options(&args)).unwrap();
 
         Ok(Self {
@@ -101,22 +102,42 @@ impl EbpfLinuxComponent {
             session,
             appendable: Fanout::new(args.forward_to, opts.id, opts.registerer),
             debug_info: DebugInfo { targets: vec![], session: Default::default() },
+            metrics: ms
         })
     }
 
-    // CollectProfiles
-    async fn collect_profiles(&self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn collect_profiles(&self) -> Result<()> {
         let mut builders = pprof::ProfileBuilders::new(1000);
         pprof::collect(&mut builders, &self.session).await?;
-
         for (_, builder) in builders.builders {
-            let service_name = builder.labels.get();
-        }
+            let service_name = builder.labels.get(SERVICE_NAME_LABEL).unwrap().trim();
+            self.metrics.pprofs_total
+                .with_label_values(&[service_name]).inc();
+            self.metrics.pprof_samples_total
+                .with_label_values(&[service_name])
+                .inc_by(builder.profile.sample.len() as f64);
 
+            let mut buf = vec![];
+            builder.write(&mut buf)?;
+
+            let raw_profile = buf.into();
+            let samples = vec![RawSample { raw_profile }];
+            self.metrics.pprof_bytes_total
+                .with_label_values(&[service_name])
+                .add(raw_profile.len() as f64);
+
+            let appender = self.appendable.appender();
+            if let Err(err) = appender.append(
+                builder.labels().clone(),
+                samples,
+            ) {
+                error!("ebpf pprof write", "err" => format!("{}", err));
+                return Err(OSError(format!("{}", err)));
+            }
+        }
         Ok(())
     }
 
-    // Update debug information
     fn update_debug_info(&mut self) {
         let debug_info = DebugInfo {
             targets: self.target_finder.debug_info(),

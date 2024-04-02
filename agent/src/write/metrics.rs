@@ -1,16 +1,17 @@
 use prometheus::{CounterVec};
 use common::common::labels::Labels;
 
-struct Metrics {
-    sent_bytes: CounterVec,
-    dropped_bytes: CounterVec,
-    sent_profiles: CounterVec,
-    dropped_profiles: CounterVec,
-    retries: CounterVec,
+#[derive(Debug, Copy, Clone)]
+pub struct Metrics {
+    pub sent_bytes: CounterVec,
+    pub dropped_bytes: CounterVec,
+    pub sent_profiles: CounterVec,
+    pub dropped_profiles: CounterVec,
+    pub retries: CounterVec,
 }
 
 impl Metrics {
-    fn new(reg: Option<&prometheus::Registry>) -> Metrics {
+    pub(crate) fn new(reg: &prometheus::Registry) -> Metrics {
         let sent_bytes = register_counter_vec(
             "iwm_write_sent_bytes_total",
             "Total number of compressed bytes sent to Pyroscope.",
@@ -60,7 +61,7 @@ pub struct Opts {
     const_labels: Labels
 }
 
-fn register_counter_vec(name: &str, help: &str, labels: &[&str], reg: Option<&prometheus::Registry>) -> CounterVec {
+fn register_counter_vec(name: &str, help: &str, labels: &[&str], reg: &prometheus::Registry) -> CounterVec {
     let opts = Opts::new(name, help);
     let counter = CounterVec::new(opts, labels)
         .expect("Failed to create CounterVec");

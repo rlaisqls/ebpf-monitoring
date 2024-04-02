@@ -1,7 +1,7 @@
 #![allow(dead_code)]
-mod appender;
-mod write;
-mod common;
-mod trident;
-mod ebpf;
-mod scrape;
+pub mod appender;
+pub mod write;
+pub mod common;
+pub mod ebpf;
+pub mod scrape;
+mod metrics;

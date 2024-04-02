@@ -7,6 +7,7 @@ use log::{debug, error, info};
 use tokio::select;
 use common::common::labels::Labels;
 use common::ebpf::sd::target::Target;
+use common::error::Result;
 use crate::appender::{Appendable, Appender, Fanout};
 use crate::common::registry::Options;
 use crate::scrape::{Group, LabelSet};
@@ -85,16 +86,16 @@ impl Default for Arguments {
     }
 }
 
-struct Component {
+pub struct ScrapeComponent {
     opts: Options,
-    reload_targets: tokio::sync::mpsc::Sender<()>, // Assuming Tokio for async communication
+    reload_targets: tokio::sync::mpsc::Sender<()>,
     args: RwLock<Arguments>,
     scraper: Arc<Manager>,
     appendable: Fanout,
 }
 
-impl Component {
-    async fn new(opts: Options, args: Arguments) -> Result<Self, String> {
+impl ScrapeComponent {
+    pub async fn new(opts: Options, args: Arguments) -> Result<Self> {
         let a = args.borrow();
         let flow_appendable = Fanout::new(Arc::new(args.forward_to), opts.id(), opts.registerer());
         let scraper = Manager::new(flow_appendable.clone());
@@ -109,7 +110,7 @@ impl Component {
         Ok(c)
     }
 
-    async fn run(&self) -> Result<(), String> {
+    pub async fn run(&self) -> Result<(), String> {
         let scraper = Arc::clone(&self.scraper);
         let opts = self.opts.clone();
         let args = self.args.clone();

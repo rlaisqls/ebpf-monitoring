@@ -1,2 +1,2 @@
-mod write;
-mod metrics;
+pub mod write;
+pub mod metrics;

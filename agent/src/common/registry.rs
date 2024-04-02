@@ -7,24 +7,14 @@ use regex::Regex;
 
 type ParsedName = Vec<String>;
 
-trait ModuleController {
-    fn new_module(&self, id: &str, export: ExportFunc) -> Result<Box<dyn Module>, String>;
-}
-
-trait Module {
-    fn load_config(&mut self, config: &[u8], args: HashMap<String, Box<dyn Any>>) -> Result<(), String>;
-    fn run(&mut self, context: Arc<()>) -> Result<(), String>;
-}
-
 type ExportFunc = fn(exports: &mut HashMap<String, Box<dyn Any>>);
 
+#[derive(Debug, Copy, Clone)]
 pub struct Options {
-    module_controller: Box<dyn ModuleController>,
-    pub(crate) id: String,
-    data_path: String, // A path to a directory with this component may use for storage.
-    on_state_change: fn(exports: Exports), // OnStateChange may be invoked at any time by a component whose Export value changes.
-    pub(crate) registerer: Arc<dyn registry>,
-    get_service_data: fn(name: &str) -> Result<Box<dyn Any>, String>,
+    pub id: String,
+    pub data_path: String, // A path to a directory with this component may use for storage.
+    pub registerer: Arc<dyn registry>,
+    pub get_service_data: fn(name: &str) -> Result<Box<dyn Any>, String>
 }
 
 type Arguments = Box<dyn Any>;

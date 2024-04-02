@@ -60,7 +60,7 @@ struct ProfileBuilder {
     locations: HashMap<String, Location>,
     functions: HashMap<String, Function>,
     sample_hash_to_sample: HashMap<u64, Sample>,
-    profile: Profile,
+    pub profile: Profile,
     pub labels: Labels,
 
     tmp_locations: Vec<Location>,

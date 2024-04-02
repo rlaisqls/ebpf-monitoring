@@ -56,7 +56,7 @@ impl Appendable for Fanout {
     }
 }
 
-struct AppenderImpl {
+pub struct AppenderImpl {
     children: Arc<Vec<Arc<dyn Appendable + Send + Sync>>>,
     component_id: String,
     write_latency: Histogram,

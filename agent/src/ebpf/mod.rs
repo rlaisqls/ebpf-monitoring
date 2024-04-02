@@ -1,3 +1,3 @@
-mod metrics;
-mod args;
-mod ebpf_linux;
+pub mod metrics;
+pub mod args;
+pub mod ebpf_linux;

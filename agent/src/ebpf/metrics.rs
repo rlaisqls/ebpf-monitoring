@@ -2,18 +2,18 @@ use prometheus::{Counter, CounterVec, Gauge};
 use common::ebpf::metrics::metrics::Metrics;
 use common::ebpf::metrics::registry::Registerer;
 
-struct metrics {
-    targets_active: Gauge,
-    profiling_sessions_total: Counter,
-    profiling_sessions_failing_total: Counter,
-    pprofs_total: CounterVec,
-    pprof_bytes_total: CounterVec,
-    pprof_samples_total: CounterVec,
-    ebpf_metrics: *Metrics
+pub struct metrics {
+    pub targets_active: Gauge,
+    pub profiling_sessions_total: Counter,
+    pub profiling_sessions_failing_total: Counter,
+    pub pprofs_total: CounterVec,
+    pub pprof_bytes_total: CounterVec,
+    pub pprof_samples_total: CounterVec,
+    pub ebpf_metrics: *Metrics
 }
 
 impl metrics {
-    pub fn new(reg: &dyn Registerer) -> Metrics {
+    pub fn new(reg: &dyn Registerer) -> metrics {
         metrics {
             targets_active: reg.register_gauge(
                 "iwm_ebpf_active_targets",
