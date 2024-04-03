@@ -1,9 +1,6 @@
-use crate::error::{Error, Result};
-use std::fmt;
-use std::io::{self};
-
 use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
 use crate::error::Error::{InvalidData, NotFound};
+use crate::error::Result;
 
 #[derive(Debug)]
 pub struct BuildID {

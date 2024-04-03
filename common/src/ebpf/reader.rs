@@ -1,7 +1,6 @@
 use std::io::{self, Read};
-use std::ops::Deref;
 use std::os::unix::io::RawFd;
-use std::{mem, ptr};
+use std::ptr;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;

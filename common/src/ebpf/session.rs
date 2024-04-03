@@ -1,13 +1,10 @@
-use std::{collections::HashMap, default, os, sync::{Arc, Mutex}, thread};
+use std::{collections::HashMap, sync::{Arc, Mutex}, thread};
 use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
-use std::hash::Hash;
 use std::io::Cursor;
 use std::ops::Deref;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
-use std::ptr::null;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use anyhow::bail;

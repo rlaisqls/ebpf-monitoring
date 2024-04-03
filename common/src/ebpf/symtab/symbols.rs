@@ -1,5 +1,4 @@
 use log::{debug, error};
-use crate::ebpf::metrics;
 use crate::ebpf::symtab::elf_cache::{ElfCache, ElfCacheDebugInfo};
 use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo, GCacheOptions};
 use crate::ebpf::metrics::symtab::SymtabMetrics;

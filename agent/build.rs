@@ -1,4 +1,3 @@
-const SRC: &str = "src/bpf/profile.bpf.c";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 

@@ -1,7 +1,5 @@
 use libbpf_cargo::SkeletonBuilder;
 
-const SRC: &str = "src/bpf/profile.bpf.c";
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ["profile", "pyperf"]
@@ -9,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .for_each(|name| {
             SkeletonBuilder::new()
                 .source(format!("src/ebpf/bpf/{}.bpf.c", name))
-                .clang_args("-I src/ebpf/bpf/vmlinux/aarch -I src/ebpf/bpf/libbpf -I src/ebpf/bpf")
+                .clang_args("-I src/ebpf/bpf/vmlinux/aarch64 -I src/ebpf/bpf/libbpf -I src/ebpf/bpf")
                 .build_and_generate(format!("src/ebpf/bpf/{}.skel.rs", name))
                 .unwrap();
     });

@@ -3,7 +3,6 @@ use std::fs;
 use std::fs::File;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::str::FromStr;
 use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
 use crate::ebpf::symtab::elf_module::{ElfTable, ElfTableOptions};
 use crate::ebpf::symtab::procmap::ProcMap;
