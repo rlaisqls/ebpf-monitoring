@@ -8,13 +8,12 @@ use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use anyhow::bail;
-use aya::util;
 use byteorder::ReadBytesExt;
 use gimli::{LittleEndian};
-use libbpf_rs::{Error, libbpf_sys, Link, Map, Program};
-use libbpf_rs::libbpf_sys::{__u32, bpf_map_batch_opts, BPF_MAP_LOOKUP_AND_DELETE_BATCH, bpf_map_lookup_and_delete_batch};
+use libbpf_rs::{Error, libbpf_sys, Link};
+use libbpf_rs::libbpf_sys::{bpf_map_batch_opts, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
-use log::{debug, error};
+use log::{debug, error, info};
 use nix::unistd;
 use prometheus::opts;
 
@@ -366,9 +365,8 @@ impl Session {
     
     fn process_dead_pids_events(&mut self) {
         for pid in self.dead_pid_events.take().unwrap() {
-            debug!(self.logger, "pid dead"; "pid" => pid);
+            debug!("pid dead: {}", pid);
             {
-                let mut data = self.mutex.lock().unwrap();
                 self.pids.dead.insert(pid, Default::default());
             }
         }
@@ -377,11 +375,11 @@ impl Session {
     fn process_pid_exec_requests(&mut self) {
         for pid in self.dead_pid_events.take().unwrap() {
             let target = self.target_finder.find_target(pid);
-            debug!(self.logger, "pid exec request"; "pid" => pid);
+            info!("pid exec request: {}", pid);
             {
                 let _ = self.mutex.lock().unwrap();
                 if self.pids.dead.contains(&pid) {
-                    debug!(self.logger, "pid exec request for dead pid"; "pid" => pid);
+                    info!("pid exec request for dead pid: {}", pid);
                     continue;
                 }
                 if target.is_none() {

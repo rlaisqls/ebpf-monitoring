@@ -120,7 +120,7 @@ impl ElfTable {
 
         let debug_file_path = self.find_debug_file(&build_id, &me);
         if !debug_file_path.is_empty() {
-            let debug_me_result = MappedElfFile::new(&PathBuf::from(&self.fs).join(&debug_file_path));
+            let debug_me_result = MappedElfFile::new(PathBuf::from(&self.fs).join(&debug_file_path));
             let debug_me = match debug_me_result {
                 Ok(file) => file,
                 Err(err) => {

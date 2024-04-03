@@ -86,7 +86,7 @@ impl Reader {
         // Hence, we have to create a ring for each CPU.
         let mut buffer_size = 0;
         for i in 0..n_cpu {
-            let ring = PerfEventRing::new(i as i32, per_cpu_buffer, false)?;
+            let ring = PerfEventRing::new(i as i32, per_cpu_buffer as i32, false)?;
             buffer_size = ring.size();
 
             let fd = ring.fd;

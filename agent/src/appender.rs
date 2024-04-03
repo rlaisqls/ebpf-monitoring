@@ -44,6 +44,10 @@ impl Fanout {
             write_latency: histogram,
         }
     }
+
+    pub fn update_children(&mut self, children: Vec<Arc<dyn Appendable>>) {
+        self.children = Arc::from(children);
+    }
 }
 
 impl Appendable for Fanout {

@@ -60,7 +60,7 @@ impl SymbolCache {
             return cached.clone();
         }
 
-        debug!(self.logger, "NewProcTable"; "pid" => pid);
+        debug!("NewProcTable {}", pid);
         let fresh = ProcTable::new(
             ProcTableOptions {
                 pid: pid as i32,
@@ -86,7 +86,7 @@ impl SymbolCache {
     fn init_kallsyms(&mut self) -> SymbolTab {
         let mut kallsyms = new_kallsyms().unwrap_or_else(|err| {
             error!(self.logger, "kallsyms init fail"; "err" => err);
-            SymbolTab::new(None)
+            SymbolTab::new(Vec::new())
         });
 
         if kallsyms.symbols.is_empty() {

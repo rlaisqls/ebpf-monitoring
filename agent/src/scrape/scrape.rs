@@ -60,6 +60,7 @@ impl ProfilingConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct Arguments {
     pub targets: Vec<Target>,
     pub forward_to: Vec<dyn Appendable>,
@@ -106,7 +107,8 @@ impl ScrapeComponent {
             scraper: Arc::new(scraper),
             appendable: flow_appendable,
         };
-        c.update(&a.clone()).await.expect("");
+        let b = a.clone();
+        c.update(a.clone()).await.expect("");
         Ok(c)
     }
 
@@ -147,7 +149,7 @@ impl ScrapeComponent {
                     let prom_targets = component_targets_to_prom(job_name.clone(), ct.get());
 
                     match target_sets_chan.send(prom_targets) {
-                        Ok(_) => debug!(opts.logger, "passed new targets to scrape manager"),
+                        Ok(_) => debug!("passed new targets to scrape manager"),
                         Err(_) => return Ok(()), // This could be improved based on actual requirement
                     }
                 }
@@ -156,9 +158,8 @@ impl ScrapeComponent {
     }
 
     async fn update(&self, args: Arguments) -> Result<(), String> {
-        let a = args.borrow();
-        self.appendable.update_children(args.forward_to);
-        if let Err(err) = self.scraper.apply_config(a) {
+        self.appendable.update_children(args.clone().forward_to);
+        if let Err(err) = self.scraper.apply_config(args) {
             return Err(format!("error applying scrape configs: {}", err).into());
         }
         debug!("scrape config was updated");

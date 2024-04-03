@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use futures::future;
 use hyper::header::{HeaderMap, HeaderName, HeaderValue};
 use hyper::service::service_fn;
-use log::debug;
+use log::{debug, info};
 use prometheus::{CounterVec, Opts, register_counter_vec};
 use prost::Message;
 use tokio::sync::oneshot;
@@ -96,7 +96,7 @@ impl Component for WriteComponent {
     async fn update(&mut self, new_cfg: Arguments) -> Result<()> {
         self.cfg = new_cfg.clone();
         // Assuming level.Debug and Log are part of a logging library
-        debug!(self.opts.logger, "updating iwm.write config"; "old" => format!("{:?}", self.cfg), "new" => format!("{:?}", new_config));
+        info!("updating iwm.write config: {:?}", self.cfg);
 
         let receiver = FanOutClient::new(
             self.opts,

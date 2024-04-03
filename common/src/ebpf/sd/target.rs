@@ -6,7 +6,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use lru::LruCache;
-use log::{debug, warn};
+use log::{debug, info, warn};
 
 use crate::common::labels::Labels;
 use crate::ebpf::sd::container_id::container_id_from_target;
@@ -160,13 +160,12 @@ impl TargetFinder {
     }
 
     pub(crate) fn update(&mut self, args: TargetsOptions) {
-        let mut guard = self.sync.lock().unwrap();
         self.set_targets(&args);
         self.resize_container_id_cache(args.container_cache_size);
     }
 
     fn set_targets(&mut self, opts: &TargetsOptions) {
-        debug!(self.l, "set targets"; "count" => opts.targets.len());
+        debug!("set targets count {}", opts.targets.len());
         let mut container_id2_target = HashMap::new();
         let mut pid2_target = HashMap::new();
 
@@ -194,8 +193,7 @@ impl TargetFinder {
                 Arc::from(Target::new("".to_string(), 0, opts.default_target.clone()))
             )
         };
-
-        debug!(self.l, "created targets"; "count" => self.cid2target.len());
+        debug!("created targets: {}", self.cid2target.len());
     }
 
     fn resize_container_id_cache(&mut self, size: usize) {
