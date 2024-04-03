@@ -76,7 +76,7 @@ pub struct Reader {
 
 impl Reader {
     pub fn new(array: &Map, per_cpu_buffer: usize) -> Result<Self, PerfError> {
-        let n_cpu = array.max_entries() as usize;
+        let n_cpu = 4 * page_size::get();
         let mut rings = Vec::with_capacity(n_cpu);
         let mut pause_fds = Vec::with_capacity(n_cpu);
         let poller = Arc::new(Poller::new()?);
@@ -93,20 +93,20 @@ impl Reader {
             rings.push(ring);
             pause_fds.push(fd);
             unsafe {
-                poller.add(fd, i as i32)?;
+                poller.add(fd, polling::Event::all(i)).unwrap();
             }
         }
 
         Ok(Reader {
             poller,
-            deadline: None,
-            mu: Mutex::new(()),
-            array,
+            deadline: Some(Duration::from_secs(10)),
+            mu: Arc::new(Mutex::new(())),
+            array: &array,
             rings,
             epoll_events: Vec::new(),
             epoll_rings: Vec::new(),
             event_header: vec![0; PERF_EVENT_HEADER_SIZE],
-            pause_mu: Mutex::new(()),
+            pause_mu: Arc::new(Mutex::new(())),
             pause_fds,
             paused: false,
             overwritable: false,
@@ -115,8 +115,8 @@ impl Reader {
     }
 
     fn close(&mut self) -> Result<(), PerfError> {
-        self.poller.close()?;
-        for ring in &self.rings {
+        self.poller.close();
+        for ring in &self.rings.iter_mut() {
             ring.close();
         }
         self.rings.clear();
@@ -134,7 +134,7 @@ impl Reader {
             lost_samples: 0,
             remaining: 0,
         };
-        self.read_into(&mut record)?;
+        self.read_into(&mut record).unwrap();
         Ok(record)
     }
 
@@ -151,7 +151,8 @@ impl Reader {
 
         loop {
             if self.epoll_rings.is_empty() {
-                let n_events = self.poller.wait(&mut self.epoll_events, self.deadline)?;
+
+                let n_events = self.poller.wait(&mut self.epoll_events, self.deadline);
                 let _ = self.pause_mu.lock().unwrap();
 
                 // Re-validate pr.paused since we dropped pauseMu.
@@ -222,11 +223,11 @@ fn read_record(rd: &mut dyn Read, rec: &mut Record, buf: &mut [u8], overwritable
     match header.type_ {
         PERF_RECORD_LOST => {
             rec.raw_sample.clear();
-            rec.lost_samples = read_lost_records(rd)?;
+            rec.lost_samples = read_lost_records(rd).unwrap();
         }
         PERF_RECORD_SAMPLE => {
             rec.lost_samples = 0;
-            rec.raw_sample = read_raw_sample(rd, overwritable)?;
+            rec.raw_sample = read_raw_sample(rd, overwritable).unwrap();
         }
         _ => return Err(UnknownEvent(header.type_)),
     }
@@ -235,7 +236,7 @@ fn read_record(rd: &mut dyn Read, rec: &mut Record, buf: &mut [u8], overwritable
 
 // Read lost records from the reader
 fn read_lost_records(rd: &mut dyn Read) -> Result<u64, io::Error> {
-    let mut buf = [0; 16]; // Assuming the size of struct perf_event_lost
+    let mut buf = [0; 8]; // Assuming the size of struct perf_event_lost
     rd.read_exact(&mut buf)?;
     Ok(u64::from_le_bytes(buf))
 }
@@ -372,11 +373,10 @@ impl RingReader for ForwardReader {
         ((self.head.load(Ordering::Relaxed) - self.tail.load(Ordering::Relaxed)) & self.mask) as usize
     }
 
-    fn write_tail(&self) {
+    fn write_tail(&mut self) {
         let tail = self.tail.load(Ordering::Relaxed);
-        unsafe {
-            *((self.meta as usize + std::mem::size_of::<u64>()) as *mut u64) = tail;
-        }
+        self.meta.data_tail = tail;&
+            
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
