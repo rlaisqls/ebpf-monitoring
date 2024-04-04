@@ -1,7 +1,7 @@
 use prometheus::CounterVec;
 use crate::ebpf::metrics::registry::Registerer;
 
-
+#[derive(Clone)]
 pub struct SymtabMetrics {
     pub elf_errors: CounterVec,
     pub proc_errors: CounterVec,

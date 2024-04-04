@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::fs;
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use lru::LruCache;
-use log::{debug, info, warn};
+use log::{debug, warn};
 
 use crate::common::labels::Labels;
 use crate::ebpf::sd::container_id::container_id_from_target;
@@ -20,7 +19,7 @@ const LABEL_SERVICE_NAME_K8S: &str = "__meta_kubernetes_pod_annotation_iwm_io_se
 const METRIC_VALUE: &str = "process_cpu";
 const RESERVED_LABEL_PREFIX: &str = "__";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Target {
     pub labels: Labels,
     service_name: String,
@@ -32,10 +31,10 @@ impl Target {
     fn new(cid: String, pid: u32, target: DiscoveryTarget) -> Self {
         let service_name = match target.get(LABEL_SERVICE_NAME) {
             Some(name) if !name.is_empty() => name.clone(),
-            _ => infer_service_name(target),
+            _ => infer_service_name(target.clone()),
         };
 
-        let mut lset = HashMap::with_capacity(target.len());
+        let mut lset = HashMap::with_capacity(target.clone().len());
         for (k, v) in target.iter() {
             if k.starts_with(RESERVED_LABEL_PREFIX) && k != METRIC_NAME {
                 continue;
@@ -65,9 +64,7 @@ impl Target {
 
     fn labels(mut self) -> (u64, Labels) {
         if !self.fingerprint_calculated {
-            let mut hasher = DefaultHasher::new();
-            self.labels.hash(&mut hasher);
-            self.fingerprint = hasher.finish();
+            self.fingerprint = self.labels.hash();
             self.fingerprint_calculated = true;
         }
         (self.fingerprint, self.labels)
@@ -114,11 +111,12 @@ pub struct TargetsOptions {
     pub container_cache_size: usize,
 }
 
+#[derive(Clone)]
 pub struct TargetFinder {
     cid2target: HashMap<String, Target>,
     pid2target: HashMap<u32, Target>,
     container_id_cache: Mutex<LruCache<u32, String>>,
-    default_target: Option<Arc<Target>>,
+    default_target: Option<Target>,
     fs: File,
     sync: Mutex<()>
 }
@@ -190,7 +188,7 @@ impl TargetFinder {
             None
         } else {
             Some(
-                Arc::from(Target::new("".to_string(), 0, opts.default_target.clone()))
+                Target::new("".to_string(), 0, opts.default_target.clone())
             )
         };
         debug!("created targets: {}", self.cid2target.len());
@@ -210,7 +208,7 @@ impl TargetFinder {
             .collect()
     }
 
-    fn targets(&self) -> Vec<Arc<Target>> {
+    fn targets(&self) -> Vec<Target> {
         self.cid2target.values().cloned().collect()
     }
 }

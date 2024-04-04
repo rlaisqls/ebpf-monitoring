@@ -3,6 +3,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 use anyhow::bail;
+use crate::error::Error;
 
 // Define the Label struct
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -37,7 +38,7 @@ impl Hash for Label {
 pub struct Labels(Vec<Label>);
 
 impl Labels {
-    pub(crate) fn new(labels: Vec<Label>) -> Self { Self(labels) }
+    pub fn new(labels: Vec<Label>) -> Self { Self(labels) }
     pub fn from_map(hashmap: HashMap<String, String>) -> Labels {
         Labels(
             hashmap
@@ -51,19 +52,35 @@ impl Labels {
         for label in &self.0 {
             map.insert(label.name.clone(), label.value.clone());
         }
-        map[name.to_string()]
+        Some(map[name.clone()].clone())
     }
     pub fn set(&mut self, name: &str, value: &str) {
         if self.get(name).is_some() {
-            self.0.iter().retain(|&l| l.name == name);
+            self.0.retain(|&l| l.name == name);
         }
-        self.0.push(Label { name, value })
+        self.0.push(Label { name: name.to_string(), value: value.to_string() })
     }
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.0.len()
     }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub fn hash(&self) -> u64 {
+        let mut hasher = xxhash_rust::xxh64::Xxh64::new(0);
+        let mut buffer = Vec::with_capacity(1024);
+        let sep: u8 = 0xff;
+
+        for label in &self.0 {
+            buffer.clear();
+            buffer.extend(label.name.as_bytes());
+            buffer.push(sep);
+            buffer.extend(label.value.as_bytes());
+            buffer.push(sep);
+            hasher.write(&buffer);
+        }
+        hasher.finish()
     }
 }
 
@@ -87,9 +104,6 @@ impl FromStr for Labels {
         let pairs: Vec<&str> = s.trim_matches(|p| p == '{' || p == '}').split(',').collect();
         for pair in pairs {
             let parts: Vec<&str> = pair.split('=').collect();
-            if parts.len() != 2 {
-                return bail!(());
-            }
             let name = parts[0].trim();
             let value = parts[1].trim_matches('"');
             labels.push(Label::new(name.to_string(), value.to_string()));

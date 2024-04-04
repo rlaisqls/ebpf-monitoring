@@ -4,8 +4,8 @@ use crate::ebpf::metrics::python::PythonMetrics;
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 
 pub struct Metrics {
-    pub(crate) symtab: SymtabMetrics,
-    python: PythonMetrics,
+    pub symtab: SymtabMetrics,
+    pub python: PythonMetrics,
 }
 
 impl Metrics {

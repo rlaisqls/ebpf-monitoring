@@ -1,5 +1,4 @@
 use std::{collections::HashMap, sync::{Arc, Mutex}, thread};
-use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
 use std::io::Cursor;
@@ -7,29 +6,21 @@ use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-use anyhow::bail;
 use byteorder::ReadBytesExt;
 use gimli::{LittleEndian};
 use libbpf_rs::{Error, libbpf_sys, Link};
 use libbpf_rs::libbpf_sys::{bpf_map_batch_opts, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use log::{debug, error, info};
-use nix::unistd;
-use prometheus::opts;
 
 use profile::*;
 
-use crate::ebpf;
 use crate::ebpf::cpuonline;
 use crate::ebpf::metrics::metrics::Metrics;
 use crate::ebpf::perf_event::PerfEvent;
 use crate::ebpf::reader::Reader;
 use crate::ebpf::sd::target::{Target, TargetFinder, TargetsOptions};
 use crate::ebpf::session::profile::profile_bss_types::sample_key;
-use crate::ebpf::symtab::elf_cache::ElfCacheDebugInfo;
-use crate::ebpf::symtab::gcache::GCacheDebugInfo;
-use crate::ebpf::symtab::proc::ProcTableDebugInfo;
-use crate::ebpf::symtab::symbols::{CacheOptions, PidKey, SymbolCache};
 use crate::ebpf::sync::PidOp;
 use crate::ebpf::sync::PidOp::Dead;
 use crate::ebpf::wait_group::WaitGroup;
@@ -50,7 +41,6 @@ pub struct SessionOptions {
     pub unknown_symbol_module_offset: bool,
     pub unknown_symbol_address: bool,
     pub python_enabled: bool,
-    pub cache_options: CacheOptions,
     pub metrics: Arc<Metrics>,
     pub sample_rate: u32,
 }
@@ -63,7 +53,6 @@ impl Default for SessionOptions {
             unknown_symbol_module_offset: false,
             unknown_symbol_address: false,
             python_enabled: false,
-            cache_options: Default::default(),
             metrics: Arc::new(Default::default()),
             sample_rate: 0,
         }
@@ -96,7 +85,6 @@ struct ProcInfoLite {
 
 pub struct Session<'a> {
     target_finder: Arc<TargetFinder>,
-    sym_cache: Arc<Mutex<SymbolCache>>,
     bpf: ProfileSkel<'a>,
 
     events_reader: Option<Receiver<u32>>,
@@ -122,22 +110,15 @@ pub struct Session<'a> {
     perf_events: ()
 }
 
-impl Session {
+impl Session<'_> {
     pub fn new(target_finder: &TargetFinder, session_options: SessionOptions) -> Result<Self> {
-        let sym_cache = SymbolCache::new(
-            session_options.cache_options,
-            session_options.metrics.symtab.clone()
-        )?;
-
         bump_memlock_rlimit()?;
-
         let mut skel_builder = ProfileSkelBuilder::default();
-        let mut open_skel = skel_builder.open()?;
+        let mut open_skel = skel_builder.open();
 
         Ok(Self {
-            target_finder,
-            sym_cache: Arc::new(Mutex::new(sym_cache)),
-            bpf: open_skel,
+            target_finder: Arc::new(*target_finder.clone()),
+            bpf: open_skel.load().unwrap(),
             events_reader: Reader::default(),
             ..Default::default()
         })
@@ -198,8 +179,6 @@ impl Session {
 
     fn update(&mut self, options: SessionOptions) -> Result<(), String> {
         let _guard = self.mutex.lock().unwrap();
-
-        self.sym_cache.update_options(options.clone().cache_options);
         self.options = options;
         Ok(())
     }
@@ -214,76 +193,6 @@ impl Session {
                 self.pids.unknown.remove(pid);
             }
         }
-    }
-
-    fn collect_profiles(&mut self, cb: CollectProfilesCallback) -> Result<(), String> {
-        let _guard = self.mutex.lock().unwrap();
-
-        self.sym_cache.next_round();
-        self.round_number += 1;
-
-        let cb = cb.clone();
-        self.collect_python_profile(cb.clone())?;
-        self.collect_regular_profile(cb)?;
-
-        self.cleanup();
-
-        Ok(())
-    }
-
-    pub fn debug_info(&self) -> SessionDebugInfo {
-        let _guard = self.mutex.lock().unwrap();
-
-        SessionDebugInfo {
-            elf_cache: self.sym_cache.elf_cache_debug_info(),
-            pid_cache: self.sym_cache.pid_cache_debug_info(),
-        }
-    }
-
-    fn collect_regular_profile(&mut self, cb: CollectProfilesCallback) -> Result<(), String> {
-        let mut sb = StackBuilder::new();
-        let mut known_stacks: HashMap<u32, bool> = HashMap::new();
-        let (keys, values, batch) = self.get_counts_map_values()?;
-
-        for (i, ck) in keys.iter().enumerate() {
-            let value = values[i];
-
-            if ck.user_stack >= 0 {
-                known_stacks.insert(ck.user_stack as u32, true);
-            }
-            if ck.kern_stack >= 0 {
-                known_stacks.insert(ck.kern_stack as u32, true);
-            }
-            if let Some(labels) = self.target_finder.find_target(ck.pid) {
-                if !self.pids.dead.contains(&ck.pid) {
-                    if let Some(proc) = self.sym_cache.get_proc_table(ck.pid) {
-                        if let Some(target) = labels {
-                            let (u_stack, k_stack) = self.get_stacks(ck.user_stack, ck.kern_stack);
-                            let mut stats = StackResolveStats::default();
-                            sb.reset();
-                            sb.append(self.comm(ck.pid));
-                            if self.options.collect_user {
-                                self.walk_stack(&mut sb, &u_stack, &proc, &mut stats);
-                            }
-                            if self.options.collect_kernel {
-                                self.walk_stack(&mut sb, &k_stack, &self.sym_cache.get_kallsyms(), &mut stats);
-                            }
-                            if sb.stack.len() > 1 {
-                                cb(target, sb.stack.clone(), value, ck.pid, true);
-                                self.collect_metrics(&target, &stats, &sb);
-                            }
-                        }
-                    } else {
-                        self.pids.dead.insert(ck.pid, ck);
-                    }
-                }
-            }
-        }
-
-        self.clear_counts_map(&keys, batch)?;
-        self.clear_stacks_map(&known_stacks)?;
-
-        Ok(())
     }
 
     fn read_events(
@@ -409,14 +318,14 @@ impl Session {
                     if *required {
                         return Err(format!("link kprobe {}: {}", kprobe, err));
                     }
-                    error!(self.logger, "link kprobe"; "kprobe" => kprobe, "err" => err);
+                    error!("link kprobe kprobe: {}, err: {}", kprobe, err);
                 }
             }
         }
         Ok(())
     }
 
-    fn get_counts_map_values(&mut self) -> Result<([sample_key], [u32], bool), String> {
+    fn get_counts_map_values(&mut self) -> Result<(Vec<sample_key>, Vec<u32>, bool), String> {
         let m = &self.bpf.maps().counts();
         let map_size = m.max_entries();
         let mut keys: [sample_key] = Vec::with_capacity(map_size);
@@ -443,8 +352,8 @@ impl Session {
                 return Ok((keys[..n].to_vec(), values[..n].to_vec(), true));
             }
 
-            let mut result_keys: [sample_key] = Vec::with_capacity(map_size);
-            let mut result_values: [u32] = Vec::with_capacity(map_size);
+            let mut result_keys: Vec<sample_key> = Vec::with_capacity(map_size);
+            let mut result_values: Vec<u32> = Vec::with_capacity(map_size);
             let mut it = m.iterate();
             while let Some((&k, &v)) = it.next() {
                 result_keys.push(k);
@@ -541,12 +450,6 @@ fn attach_perf_events(sample_rate: u32, link: &Link) -> Result<Vec<PerfEvent>> {
         }
     }
     Ok(perf_events)
-}
-
-#[derive(Default)]
-pub struct SessionDebugInfo {
-    elf_cache: Option<ElfCacheDebugInfo>,
-    pid_cache: Option<Vec<GCacheDebugInfo<ProcTableDebugInfo>>>,
 }
 
 struct StackBuilder {

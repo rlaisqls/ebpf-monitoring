@@ -70,7 +70,7 @@ impl Appender for AppenderImpl {
     fn append(&self, labels: Labels, samples: Vec<RawSample>) -> Result<()> {
         let start_time = Instant::now();
         for child in self.children.iter() {
-            child.appender().append(labels.clone(), samples.clone())?;
+            child.appender().append(labels.clone(), samples.clone()).unwrap();
         }
         let duration = start_time.elapsed();
         self.write_latency.observe(duration.as_secs_f64());

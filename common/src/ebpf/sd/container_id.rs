@@ -1,4 +1,5 @@
-use crate::ebpf::sd::target::{DiscoveryTarget, LABEL_CONTAINER_ID};
+use crate::ebpf::sd::target::{LABEL_CONTAINER_ID};
+use crate::ebpf::session::DiscoveryTarget;
 
 pub type ContainerID = String;
 

@@ -2,6 +2,7 @@ use prometheus::{Counter, CounterVec};
 
 use crate::ebpf::metrics::registry::Registerer;
 
+#[derive(Clone)]
 pub struct PythonMetrics {
     pub pid_data_error: CounterVec,
     pub lost_samples: Counter,

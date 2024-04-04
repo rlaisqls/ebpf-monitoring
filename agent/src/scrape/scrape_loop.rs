@@ -316,8 +316,8 @@ impl ScrapeLoop {
         let url = self.url();
         log::debug!("scraping {} profile: url: {}", profile_type, url);
 
-        let resp = self.scrape_client.get(url).send()?;
-        let mut resp = resp.error_for_status()?;
+        let resp = self.scrape_client.get(url).send().unwrap();
+        let mut resp = resp.error_for_status();
         let mut body = Vec::new();
         copy(&mut resp, &mut body)?;
         buf.write_all(&body)?;
