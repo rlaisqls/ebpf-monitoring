@@ -389,6 +389,7 @@ dependencies = [
  "polling",
  "pprof",
  "prometheus",
+ "prost",
  "regex",
  "rustc-demangle",
  "rustix",

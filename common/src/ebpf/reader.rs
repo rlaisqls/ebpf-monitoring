@@ -59,7 +59,7 @@ pub struct Reader {
 
     // Closing a PERF_EVENT_ARRAY removes all event fds
     // stored in it, so we keep a reference alive.
-    array: Map,
+    array: Arc<Map>,
     rings: Vec<PerfEventRing>,
     epoll_events: Vec<epoll::Event>,
     epoll_rings: Vec<PerfEventRing>,
@@ -75,7 +75,7 @@ pub struct Reader {
 }
 
 impl Reader {
-    pub fn new(array: &Map, per_cpu_buffer: usize) -> Result<Self, PerfError> {
+    pub fn new(array: Arc<Map>, per_cpu_buffer: usize) -> Result<Self, PerfError> {
         let n_cpu = 4 * page_size::get();
         let mut rings = Vec::with_capacity(n_cpu);
         let mut pause_fds = Vec::with_capacity(n_cpu);
@@ -101,7 +101,7 @@ impl Reader {
             poller,
             deadline: Some(Duration::from_secs(10)),
             mu: Arc::new(Mutex::new(())),
-            array: &array,
+            array,
             rings,
             epoll_events: Vec::new(),
             epoll_rings: Vec::new(),
@@ -259,7 +259,7 @@ trait RingReader {
     fn size(&self) -> usize;
     fn remaining(&self) -> usize;
     fn write_tail(&self);
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error>;
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 }
 
 struct PerfEventRing {
@@ -289,7 +289,9 @@ impl PerfEventRing {
             return Err(io::Error::last_os_error());
         }
 
-        let ring_reader= ForwardReader::new();
+        let mut meta = mmap as *mut perf_event_mmap_page;
+        let ring = unsafe { from_raw_parts_mut(mmap as *mut u8, perf_buffer_size(per_cpu_buffer as usize)) };
+        let ring_reader= ForwardReader::new(unsafe { *meta }, ring.deref());
 
         Ok(PerfEventRing {
             fd,
@@ -321,6 +323,12 @@ impl RingReader for PerfEventRing {
     fn size(&self) -> usize { self.ring_reader.size() }
     fn remaining(&self) -> usize { self.ring_reader.remaining() }
     fn write_tail(&self) { self.ring_reader.load_head() }
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+        self.ring_reader.read(buf)
+    }
+}
+
+impl Read for PerfEventRing {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
         self.ring_reader.read(buf)
     }
@@ -359,6 +367,15 @@ struct ForwardReader {
     ring: Vec<u8>,
 }
 
+impl ForwardReader {
+    fn new(meta: perf_event_mmap_page, ring: &[u8]) -> Self {
+        let head = AtomicU64::new(meta.data_head);
+        let tail = AtomicU64::new(meta.data_tail);
+        let mask = (ring.len() - 1) as u64; // Assuming ring.len() is a power of two
+        Self { meta, head, tail, mask, ring: Vec::from(ring) }
+    }
+}
+
 impl RingReader for ForwardReader {
     fn load_head(&self) {
         let head = unsafe { *(self.meta as *const u64) };
@@ -375,8 +392,7 @@ impl RingReader for ForwardReader {
 
     fn write_tail(&mut self) {
         let tail = self.tail.load(Ordering::Relaxed);
-        self.meta.data_tail = tail;&
-            
+        self.meta.data_tail = tail;
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {

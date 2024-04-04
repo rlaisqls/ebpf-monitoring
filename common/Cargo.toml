@@ -36,6 +36,8 @@ cfg-if = "1.0.0"
 url = "2.5.0"
 sha256 = "1.5.0"
 sha2 = "0.10.8"
+libbpf-sys = "1.4.0"
+prost = "0.12.3"
 
 [dependencies.xxhash-rust]
 version = "0.8.5"

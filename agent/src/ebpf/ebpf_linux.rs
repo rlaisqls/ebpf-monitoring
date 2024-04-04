@@ -109,6 +109,7 @@ impl EbpfLinuxComponent {
     async fn collect_profiles(&self) -> Result<()> {
         let mut builders = pprof::ProfileBuilders::new(1000);
         pprof::collect(&mut builders, &self.session).await?;
+
         for (_, builder) in builders.builders {
             let service_name = builder.labels.get(SERVICE_NAME_LABEL).unwrap().trim();
             self.metrics.pprofs_total

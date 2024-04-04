@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
 use std::io::Cursor;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -150,7 +150,7 @@ impl Session {
 
         let mut skel = self.bpf.load()?;
         skel.attach()?;
-        let events_reader = Reader::new(&self.bpf.maps_mut().events(), 4 * page_size::get())?;
+        let events_reader = Reader::new(Arc::new(self.bpf.maps_mut().events()), 4 * page_size::get())?;
         self.perf_events = attach_perf_events(self.options.sample_rate, &self.bpf.links.do_perf_event.take().unwrap())?;
 
         if let Err(err) = self.link_kprobes() {
