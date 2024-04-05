@@ -3,12 +3,15 @@ use std::fs;
 use std::fs::File;
 use std::ops::Deref;
 use std::path::PathBuf;
+use std::sync::Arc;
 use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
 use crate::ebpf::symtab::elf_module::{ElfTable, ElfTableOptions};
 use crate::ebpf::symtab::procmap::ProcMap;
+use crate::ebpf::symtab::symtab::SymbolTable;
+use crate::ebpf::symtab::table::Symbol;
 
 pub struct ProcTable {
-    ranges: Vec<ElfRange>,
+    ranges: Vec<Arc<ElfRange>>,
     file_to_table: HashMap<File, ElfTable>,
     options: ProcTableOptions,
     root_fs: PathBuf,
@@ -16,7 +19,7 @@ pub struct ProcTable {
 }
 
 pub struct ProcTableDebugInfo {
-    elf_tables: HashMap<String, SymTabDebugInfo>, // 가정: SymTabDebugInfo는 정의되어 있음
+    elf_tables: HashMap<String, SymTabDebugInfo>,
     size: usize,
     pid: i32,
     last_used_round: i32,
@@ -27,28 +30,20 @@ pub struct ProcTableOptions {
     pub(crate) elf_table_options: ElfTableOptions
 }
 
+#[derive(Eq, Ord)]
 pub struct ElfRange {
-    map_range: Option<ProcMap>,
+    map_range: ProcMap,
     elf_table: Option<ElfTable>,
 }
 
-impl ProcTable {
-    pub(crate) fn new(options: ProcTableOptions) -> Self {
-        Self {
-            ranges: Vec::new(),
-            file_to_table: HashMap::new(),
-            options,
-            root_fs: PathBuf::from(format!("/proc/{}/root", options.pid)),
-            err: None,
-        }
-    }
+impl SymbolTable for ProcTable {
 
     fn refresh(&mut self) {
         if self.err.is_some() {
             return;
         }
 
-        let path = format!("/proc/{}/maps", self.options.pid);
+        let path = format!("/proc/{}/maps", self.options.pid.to_string());
         match fs::read_to_string(&path) {
             Ok(proc_maps) => {
                 self.err = Some(self.refresh_proc_map(proc_maps).into());
@@ -58,6 +53,93 @@ impl ProcTable {
             }
         }
     }
+
+    fn cleanup(&mut self) {
+        self.file_to_table
+            .iter_mut()
+            .map(|_, table| table.cleanup() )
+            .collect();
+    }
+
+    fn resolve(&mut self, pc: u64) -> Symbol {
+        if pc == 0xcccccccccccccccc || pc == 0x9090909090909090 {
+            return Symbol {
+                start: 0,
+                name: "end_of_stack".to_string(),
+                module: "[unknown]".to_string(),
+            };
+        }
+
+        let (i, found) = binary_search_func(&self.ranges, pc, binary_search_elf_range);
+        if !found {
+            return Symbol::default();
+        }
+
+        let r = &self.ranges.get_mut(i).unwrap();
+        if let Some(mut t) = &r.elf_table {
+            let s = t.resolve(pc); // Cannot borrow immutable local variable `t` as mutable
+            let module_offset = pc - t.base;
+            return if s.is_empty() {
+                Symbol {
+                    start: module_offset,
+                    module: r.map_range.pathname.clone(),
+                    ..Default::default()
+                }
+            } else {
+                Symbol {
+                    start: module_offset,
+                    name: s,
+                    module: r.map_range.pathname.clone(),
+                }
+            }
+        }
+        Symbol::default()
+    }
+}
+
+fn binary_search_func<S, E, T, F>(x: &[E], target: T, mut cmp: F) -> (usize, bool)
+    where
+        S: AsRef<[E]>,
+        E: Ord,
+        F: FnMut(&E, &T) -> std::cmp::Ordering,
+{
+    let mut i = 0;
+    let mut j = x.len();
+    while i < j {
+        let h = (i + j) / 2;
+        match cmp(&x[h], &target) {
+            std::cmp::Ordering::Less => {
+                i = h + 1;
+            }
+            _ => {
+                j = h;
+            }
+        }
+    }
+    (i, i < x.len() && cmp(&x[i], &target) == std::cmp::Ordering::Equal)
+}
+
+fn binary_search_elf_range(e: &ElfRange, pc: u64) -> i32 {
+    if pc < e.map_range.start_addr {
+        return 1;
+    }
+    if pc >= e.map_range.end_addr {
+        return -1;
+    }
+    0
+}
+
+impl ProcTable {
+    pub(crate) fn new(options: ProcTableOptions) -> Self {
+        Self {
+            ranges: Vec::new(),
+            file_to_table: HashMap::new(),
+            options,
+            root_fs: PathBuf::from(format!("/proc/{}/root", options.pid.to_string())),
+            err: None,
+        }
+    }
+
     fn refresh_proc_map(&mut self, proc_maps: String) -> Result<(), String> {
         // todo support perf map files
         for range in &mut self.ranges {
@@ -73,7 +155,7 @@ impl ProcTable {
 
         for map in maps {
             let range = ElfRange {
-                map_range: Option::from(map),
+                map_range: map,
                 elf_table: None,
             };
             self.ranges.push(range.clone());

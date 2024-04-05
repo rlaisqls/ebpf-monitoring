@@ -22,3 +22,4 @@
 
 - https://pyroscope.io/blog/ebpf-profiling-pros-cons/
 - https://fedepaol.github.io/blog/2023/09/24/ebpf-journey-by-examples-perf-events-with-pyroscope/
+- https://grafana.com/docs/pyroscope/latest/configure-client/grafana-agent/ebpf/troubleshooting/

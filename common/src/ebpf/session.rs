@@ -1,4 +1,5 @@
 use std::{collections::HashMap, sync::{Arc, Mutex}, thread};
+use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
 use std::io::Cursor;
@@ -8,19 +9,26 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use byteorder::ReadBytesExt;
 use gimli::{LittleEndian};
-use libbpf_rs::{Error, libbpf_sys, Link};
+use libbpf_rs::{Error, libbpf_sys, Link, MapFlags};
 use libbpf_rs::libbpf_sys::{bpf_map_batch_opts, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use log::{debug, error, info};
 
 use profile::*;
+use crate::ebpf;
 
 use crate::ebpf::cpuonline;
 use crate::ebpf::metrics::metrics::Metrics;
+use crate::ebpf::metrics::symtab::SymtabMetrics;
 use crate::ebpf::perf_event::PerfEvent;
 use crate::ebpf::reader::Reader;
 use crate::ebpf::sd::target::{Target, TargetFinder, TargetsOptions};
 use crate::ebpf::session::profile::profile_bss_types::sample_key;
+use crate::ebpf::symtab::elf_cache::ElfCacheDebugInfo;
+use crate::ebpf::symtab::gcache::GCacheDebugInfo;
+use crate::ebpf::symtab::proc::ProcTableDebugInfo;
+use crate::ebpf::symtab::symbols::{CacheOptions, PidKey, SymbolCache};
+use crate::ebpf::symtab::symtab::SymbolTable;
 use crate::ebpf::sync::PidOp;
 use crate::ebpf::sync::PidOp::Dead;
 use crate::ebpf::wait_group::WaitGroup;
@@ -31,10 +39,9 @@ mod profile {
     include!("bpf/profile.skel.rs");
 }
 
-type CollectProfilesCallback =
-Box<dyn Fn(Target, Vec<String>, u64, u32, bool) + Send + 'static>;
+type CollectProfilesCallback = Box<dyn Fn(Target, Vec<String>, u64, u32, bool) + Send + 'static>;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct SessionOptions {
     pub collect_user: bool,
     pub collect_kernel: bool,
@@ -43,20 +50,7 @@ pub struct SessionOptions {
     pub python_enabled: bool,
     pub metrics: Arc<Metrics>,
     pub sample_rate: u32,
-}
-
-impl Default for SessionOptions {
-    fn default() -> Self {
-        Self {
-            collect_user: false,
-            collect_kernel: false,
-            unknown_symbol_module_offset: false,
-            unknown_symbol_address: false,
-            python_enabled: false,
-            metrics: Arc::new(Default::default()),
-            sample_rate: 0,
-        }
-    }
+    pub cache_options: CacheOptions,
 }
 
 enum SampleAggregation {
@@ -83,8 +77,15 @@ struct ProcInfoLite {
     typ: ProfilingType,
 }
 
+
+pub struct SessionDebugInfo {
+    elf_cache: ElfCacheDebugInfo,
+    pid_cache: GCacheDebugInfo<ProcTableDebugInfo>
+}
+
 pub struct Session<'a> {
     target_finder: Arc<TargetFinder>,
+    sym_cache: Arc<SymbolCache>,
     bpf: ProfileSkel<'a>,
 
     events_reader: Option<Receiver<u32>>,
@@ -110,8 +111,9 @@ pub struct Session<'a> {
     perf_events: ()
 }
 
-impl Session<'_> {
-    pub fn new(target_finder: &TargetFinder, session_options: SessionOptions) -> Result<Self> {
+impl Session {
+    pub fn new(target_finder: &TargetFinder, opts: SessionOptions) -> Result<Self> {
+        let sym_cache = SymbolCache::new(opts.cache_options, opts.metrics.borrow().symtab);
         bump_memlock_rlimit()?;
         let mut skel_builder = ProfileSkelBuilder::default();
         let mut open_skel = skel_builder.open();
@@ -120,6 +122,7 @@ impl Session<'_> {
             target_finder: Arc::new(*target_finder.clone()),
             bpf: open_skel.load().unwrap(),
             events_reader: Reader::default(),
+            sym_cache,
             ..Default::default()
         })
     }
@@ -144,23 +147,22 @@ impl Session<'_> {
         let (pid_info_request_tx, pid_info_request_rx) = channel::<u32>();
         let (pid_exec_request_tx, pid_exec_request_rx) = channel::<u32>();
         let (dead_pid_events_tx, dead_pid_events_rx) = channel::<u32>();
+
         self.pid_info_requests = pid_info_request_rx;
         self.pid_exec_requests = pid_exec_request_rx;
         self.dead_pid_events = dead_pid_events_rx;
         self.wg.add(4);
 
         self.started = true;
-        let mut threads = Vec::with_capacity(4);
         for f in vec![
             move || self.read_events(pid_info_request_tx, pid_exec_request_tx, dead_pid_events_tx),
             move || self.process_pid_info_requests(),
             move || self.process_dead_pids_events(),
             move || self.process_pid_exec_requests(),
         ] {
-            let thread = thread::spawn(move || {
+            thread::spawn(move || {
                 f();
             });
-            threads.push(thread);
         }
         Ok(())
     }
@@ -422,6 +424,177 @@ impl Session<'_> {
         }
         println!("clearStacksMap deleted known stacks count: {} unsuccessful: {}", cnt, errs);
         Ok(())
+    }
+
+    fn collect_profiles(&mut self, cb: CollectProfilesCallback) -> Result<()> {
+        let _guard = self.mutex.lock().unwrap();
+        self.sym_cache.next_round();
+        self.round_number += 1;
+
+        let cb = cb.clone();
+        self.collect_regular_profile(cb)?;
+        self.cleanup();
+
+        Ok(())
+    }
+
+    pub fn debug_info(&self) -> SessionDebugInfo {
+        SessionDebugInfo {
+            elf_cache: self.sym_cache.elf_cache_debug_info(),
+            pid_cache: self.sym_cache.pid_cache_debug_info()
+        }
+    }
+
+    fn collect_regular_profile(&mut self, cb: CollectProfilesCallback) -> Result<()> {
+        let mut sb = StackBuilder::new();
+        let mut known_stacks: HashMap<u32, bool> = HashMap::new();
+        let (keys, values, batch) = self.get_counts_map_values()?;
+
+        for (i, ck) in keys.iter().enumerate() {
+            let value = values[i];
+
+            if ck.user_stack >= 0 {
+                known_stacks.insert(ck.user_stack as u32, true);
+            }
+            if ck.kern_stack >= 0 {
+                known_stacks.insert(ck.kern_stack as u32, true);
+            }
+            if let Some(labels) = self.target_finder.find_target(ck.pid) {
+                if self.pids.dead.contains(&ck.pid) {
+                    continue;
+                }
+                if let Some(proc) = self.sym_cache.get_proc_table(ck.pid) {
+                    let u_stack = self.get_stack(ck.user_stack).unwrap();
+                    let k_stack = self.get_stack(ck.kern_stack).unwrap();
+                    let mut stats = StackResolveStats::default();
+                    sb.reset();
+                    sb.append(self.comm(ck.pid));
+                    if self.options.collect_user {
+                        self.walk_stack(&mut sb, &u_stack, &proc, &mut stats);
+                    }
+                    if self.options.collect_kernel {
+                        self.walk_stack(&mut sb, &k_stack, &self.sym_cache.get_kallsyms(), &mut stats);
+                    }
+                    if sb.stack.len() > 1 {
+                        cb(labels, sb.stack.clone(), value, ck.pid, true);
+                        self.collect_metrics(&labels, &stats, &sb);
+                    }
+                } else {
+                    self.pids.dead.insert(ck.pid, ck);
+                }
+            }
+        }
+        self.clear_counts_map(&keys, batch)?;
+        self.clear_stacks_map(&known_stacks)?;
+
+        Ok(())
+    }
+
+    fn walk_stack(&self, sb: &mut StackBuilder, stack: &[u8], resolver: &dyn SymbolTable, stats: &mut StackResolveStats) {
+        if stack.is_empty() {
+            return;
+        }
+
+        let mut stack_frames = Vec::new();
+        for i in 0..127 {
+            let start = i * 8;
+            let end = start + 8;
+            if end > stack.len() {
+                break;
+            }
+            let instruction_pointer_bytes = &stack[i * 8..(i + 1) * 8];
+            let instruction_pointer = u64::from_le_bytes(instruction_pointer_bytes.try_into().unwrap());
+            if instruction_pointer == 0 {
+                break;
+            }
+            let sym = resolver.resolve(instruction_pointer);
+            let name = if !sym.name.is_empty() {
+                stats.known += 1;
+                sym.name.clone()
+            } else {
+                if !sym.module.is_empty() {
+                    if self.options.unknown_symbol_module_offset {
+                        format!("{}+{:x}", sym.module, sym.start)
+                    } else {
+                        sym.module.clone()
+                    }
+                } else {
+                    if self.options.unknown_symbol_address {
+                        format!("{:x}", instruction_pointer)
+                    } else {
+                        "[unknown]".to_string()
+                    }
+                }
+            };
+            stack_frames.push(name);
+        }
+        stack_frames.reverse();
+        for s in stack_frames {
+            sb.append(s);
+        }
+    }
+
+    fn get_stack(&self, stack_id: i64) -> Option<Vec<u8>> {
+        if stack_id < 0 {
+            return None;
+        }
+        let stack_id_u32 = stack_id as u32;
+        self.bpf.maps().stacks()
+            .lookup(&*stack_id_u32.to_le_bytes(), MapFlags::ANY)
+            .unwrap_or_else(|_| None)
+    }
+
+    fn collect_metrics(&self, labels: &Target, stats: &StackResolveStats, sb: &StackBuilder) {
+        let m = &self.options.metrics.symtab;
+        let service_name = labels.service_name();
+        if m != &SymtabMetrics::default() {
+            m.known_symbols.with_label_values(&[&service_name]).set(stats.known as i64);
+            m.unknown_symbols.with_label_values(&[&service_name]).set(stats.unknown_symbols as i64);
+            m.unknown_modules.with_label_values(&[&service_name]).set(stats.unknown_modules as i64);
+        }
+        if sb.len() > 2 && stats.unknown_symbols + stats.unknown_modules > stats.known {
+            m.unknown_stacks.with_label_values(&[&service_name]).inc();
+        }
+    }
+
+    fn cleanup(&mut self) {
+        self.sym_cache.cleanup();
+
+        let mut dead_pids_to_remove = HashSet::new();
+        for pid in self.pids.dead.keys() {
+            dbg!("cleanup dead pid: {}", pid.to_string());
+            dead_pids_to_remove.insert(*pid);
+        }
+
+        for pid in &dead_pids_to_remove {
+            self.pids.dead.remove(pid);
+            self.pids.unknown.remove(pid);
+            self.pids.all.remove(pid);
+            self.sym_cache.remove_dead_pid(*pid);
+            self.bpf.maps().pids().delete(*pid.to_le_bytes()).unwrap();
+            self.target_finder.remove_dead_pid(*pid);
+        }
+
+        let mut unknown_pids_to_remove = HashSet::new();
+        for pid in self.pids.unknown.keys() {
+            let proc_path = format!("/proc/{}", pid);
+            if let Err(err) = std::fs::metadata(&proc_path) {
+                if !matches!(err.kind(), std::io::ErrorKind::NotFound) {
+                    error!("cleanup stat pid: {} err: {}", pid, err);
+                }
+                unknown_pids_to_remove.insert(*pid);
+                self.pids.all.remove(pid);
+                self.bpf.maps().pids().delete(*pid.to_le_bytes())
+            }
+        }
+
+        for pid in &unknown_pids_to_remove {
+            self.pids.unknown.remove(pid);
+        }
+
+        if self.round_number % 10 == 0 {
+            self.check_stale_pids();
+        }
     }
 }
 

@@ -1,5 +1,5 @@
-use goblin::pe::symbol::Symbol;
 use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
+use crate::ebpf::symtab::table::Symbol;
 
 pub trait SymbolTable {
     fn refresh(&mut self);

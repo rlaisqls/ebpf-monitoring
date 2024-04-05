@@ -1,6 +1,8 @@
+use crate::ebpf::symtab::symtab::SymbolTable;
+
 #[derive(Debug)]
-pub struct SymTab {
-    symbols: Vec<Sym>,
+pub struct SymbolTab {
+    pub(crate) symbols: Vec<Sym>,
     base: u64,
 }
 
@@ -10,16 +12,32 @@ pub struct Sym {
     name: String,
 }
 
-impl SymTab {
-    fn new(symbols: Vec<Sym>) -> Self {
-        SymTab {
-            symbols,
-            base: 0,
-        }
+pub struct Symbol {
+    pub(crate) start: u64,
+    pub(crate) name: String,
+    pub(crate) module: String
+}
+
+impl SymbolTab {
+    pub(crate) fn new(symbols: Vec<Sym>) -> Self {
+        SymbolTab { symbols, base: 0 }
     }
 
     fn rebase(&mut self, base: u64) {
         self.base = base;
+    }
+
+    fn debug_string(&self) -> String {
+        String::from("SymbolTab {TODO}")
+    }
+}
+
+impl SymbolTable for SymbolTab {
+
+    fn refresh(&mut self) {
+    }
+
+    fn cleanup(&mut self) {
     }
 
     fn resolve(&self, addr: u64) -> Option<&Sym> {
@@ -34,59 +52,5 @@ impl SymTab {
             .binary_search_by(|sym| sym.start.cmp(&addr))
             .unwrap_or_else(|index| index - 1);
         self.symbols.get(index)
-    }
-
-    fn len(&self) -> usize {
-        self.symbols.len()
-    }
-}
-
-#[derive(Debug)]
-pub struct SymbolTab {
-    pub(crate) symbols: Vec<Symbol>,
-    base: u64,
-}
-
-#[derive(Debug)]
-pub struct Symbol {
-    pub(crate) start: u64,
-    pub(crate) name: String,
-    pub(crate) module: String,
-}
-
-impl SymbolTab {
-    pub(crate) fn new(symbols: Vec<Symbol>) -> Self {
-        SymbolTab {
-            symbols,
-            base: 0,
-        }
-    }
-
-    fn rebase(&mut self, base: u64) {
-        self.base = base;
-    }
-
-    fn resolve(&self, addr: u64) -> Option<&Symbol> {
-        if self.symbols.is_empty() {
-            return None;
-        }
-        let addr = addr - self.base;
-        if addr < self.symbols[0].start {
-            return None;
-        }
-        let index = self.symbols
-            .binary_search_by(|sym| sym.start.cmp(&addr))
-            .unwrap_or_else(|index| index - 1);
-        self.symbols.get(index)
-    }
-
-    fn debug_string(&self) -> String {
-        String::from("SymbolTab{TODO}")
-    }
-
-    fn refresh(&mut self) {
-    }
-
-    fn cleanup(&mut self) {
     }
 }

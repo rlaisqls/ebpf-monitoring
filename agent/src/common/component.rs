@@ -8,6 +8,6 @@ pub struct Arguments {
 
 #[async_trait]
 pub trait Component: Send + Sync {
-    async fn run(&self) -> Result<()>;
-    async fn update(&mut self, args: Arguments) -> Result<()>;
+    async fn run(&self);
+    async fn update(&mut self, args: Arguments);
 }

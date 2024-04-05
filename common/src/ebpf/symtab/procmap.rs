@@ -18,7 +18,7 @@ pub struct ProcMap {
     offset: i64,
     dev: u64,
     inode: u64,
-    pathname: String,
+    pub(crate) pathname: String,
 }
 
 

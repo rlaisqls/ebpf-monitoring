@@ -13,11 +13,11 @@ use crate::ebpf::session::DiscoveryTarget;
 
 pub const LABEL_CONTAINER_ID: &str = "__container_id__";
 pub const METRIC_NAME: &str = "__name__";
-const LABEL_PID: &str = "__process_pid__";
-const LABEL_SERVICE_NAME: &str = "service_name";
-const LABEL_SERVICE_NAME_K8S: &str = "__meta_kubernetes_pod_annotation_iwm_io_service_name";
-const METRIC_VALUE: &str = "process_cpu";
-const RESERVED_LABEL_PREFIX: &str = "__";
+pub const LABEL_PID: &str = "__process_pid__";
+pub const LABEL_SERVICE_NAME: &str = "service_name";
+pub const LABEL_SERVICE_NAME_K8S: &str = "__meta_kubernetes_pod_annotation_iwm_io_service_name";
+pub const METRIC_VALUE: &str = "process_cpu";
+pub const RESERVED_LABEL_PREFIX: &str = "__";
 
 #[derive(Debug, Clone)]
 pub struct Target {
@@ -74,7 +74,7 @@ impl Target {
         self.labels.to_string()
     }
 
-    fn service_name(&self) -> &str {
+    pub(crate) fn service_name(&self) -> &str {
         &self.service_name
     }
 }
@@ -151,7 +151,7 @@ impl TargetFinder {
         }
     }
 
-    fn remove_dead_pid(&mut self, pid: u32) {
+    pub(crate) fn remove_dead_pid(&mut self, pid: u32) {
         self.pid2target.remove(&pid);
         let mut cache = self.container_id_cache.lock().unwrap();
         cache.pop(&pid);

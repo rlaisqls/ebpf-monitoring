@@ -7,7 +7,7 @@ use std::fs::File;
 use log::error;
 use tokio::time::interval;
 use common::ebpf::pprof;
-use common::ebpf::sd::target::{TargetFinder, TargetsOptions};
+use common::ebpf::sd::target::{LABEL_CONTAINER_ID, LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
 use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
 use common::ebpf::symtab::elf_module::SymbolOptions;
 use common::ebpf::symtab::gcache::GCacheOptions;
@@ -19,7 +19,6 @@ use crate::appender::{Appendable, Fanout, RawSample};
 use crate::common::component::Component;
 use crate::common::registry::Options;
 use crate::ebpf::metrics::metrics;
-use crate::scrape::target::SERVICE_NAME_LABEL;
 
 type Target = HashMap<String, String>;
 #[derive(Debug, Copy, Clone)]
@@ -57,7 +56,7 @@ struct DebugInfo {
 }
 
 impl Component for EbpfLinuxComponent {
-    async fn run(mut self) -> Result<()> {
+    async fn run(mut self) {
         let mut interval = interval(self.args.collect_interval);
         loop {
             tokio::select! {
@@ -82,7 +81,7 @@ impl Component for EbpfLinuxComponent {
     fn update(&mut self, args: Arguments) {
         self.args = args;
         self.session.update_targets(targets_option_from_args(&self.args));
-        self.appendable.update_children(&self.args.forward_to);
+        self.appendable.update_children(self.args.clone().forward_to);
     }
 }
 
@@ -111,7 +110,7 @@ impl EbpfLinuxComponent {
         pprof::collect(&mut builders, &self.session).await?;
 
         for (_, builder) in builders.builders {
-            let service_name = builder.labels.get(SERVICE_NAME_LABEL).unwrap().trim();
+            let service_name = builder.labels.get(LABEL_SERVICE_NAME).unwrap().trim();
             self.metrics.pprofs_total
                 .with_label_values(&[service_name]).inc();
             self.metrics.pprof_samples_total

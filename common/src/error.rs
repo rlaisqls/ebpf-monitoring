@@ -17,7 +17,9 @@ pub enum Error {
     #[error("Unknown event: {0}")]
     UnknownEvent(u32),
     #[error("OS Error: {0}")]
-    OSError(String)
+    OSError(String),
+    #[error("Symbol Error: {0}")]
+    SymbolError(String)
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

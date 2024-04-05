@@ -14,7 +14,6 @@ impl ElfCache {
     pub fn new(build_id_cache_options: GCacheOptions, same_file_cache_options: GCacheOptions) -> Result<Self, Box<dyn std::error::Error>> {
         let build_id_cache = Mutex::new(GCache::<BuildID, SymbolNameResolver>::new(build_id_cache_options)?);
         let same_file_cache = Mutex::new(GCache::<Stat, SymbolNameResolver>::new(same_file_cache_options)?);
-
         Ok(Self { build_id_cache, same_file_cache })
     }
 
@@ -75,7 +74,6 @@ impl ElfCache {
             res.last_used_round = round;
             res
         });
-
         ElfCacheDebugInfo { build_id_cache, same_file_cache }
     }
 }

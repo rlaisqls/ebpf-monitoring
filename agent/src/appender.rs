@@ -21,7 +21,7 @@ pub trait Appendable {
 }
 
 pub struct Fanout {
-    children: Arc<Vec<Arc<dyn Appendable + Send + Sync>>>,
+    children: Arc<Vec<dyn Appendable + Send + Sync>>,
     component_id: String,
     write_latency: Histogram,
 }
@@ -45,8 +45,8 @@ impl Fanout {
         }
     }
 
-    pub fn update_children(&mut self, children: Vec<Arc<dyn Appendable>>) {
-        self.children = Arc::from(children);
+    pub fn update_children(&mut self, children: Arc<Vec<dyn Appendable>>) {
+        self.children = children;
     }
 }
 

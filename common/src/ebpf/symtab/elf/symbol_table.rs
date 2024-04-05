@@ -1,7 +1,8 @@
 use goblin::elf::SectionHeader;
 
 use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
-use crate::ebpf::symtab::gosym::pcindex::PCIndex;
+use crate::ebpf::symtab::elf::pcindex::PCIndex;
+use crate::ebpf::symtab::symtab::SymbolNameResolver;
 use crate::error::{Error::NotFound, Result};
 
 pub struct SymbolIndex {
@@ -9,9 +10,9 @@ pub struct SymbolIndex {
     pub(crate) value: u64,
 }
 
-pub(crate) struct Name(u32);
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SectionLinkIndex(u8);
+pub(crate) struct Name(u32);
 
 pub(crate) const SECTION_TYPE_SYM: SectionLinkIndex = SectionLinkIndex(0);
 pub(crate) const SECTION_TYPE_DYN_SYM: SectionLinkIndex = SectionLinkIndex(1);
@@ -28,21 +29,24 @@ impl Name {
     }
 }
 
-struct FlatSymbolIndex {
-    links: [SectionHeader; 2],
-    names: Vec<Name>,
-    values: PCIndex,
+pub struct FlatSymbolIndex {
+    pub(crate) links: [SectionHeader; 2],
+    pub(crate) names: Vec<Name>,
+    pub(crate) values: PCIndex
 }
 
 #[derive(Debug)]
-pub struct SymbolTable {
-    index: FlatSymbolIndex,
-    file: MappedElfFile
+pub struct SymbolNameTable {
+    pub(crate) index: FlatSymbolIndex,
+    pub(crate) file: MappedElfFile
 }
 
-impl SymbolTable {
-    fn is_dead(&self) -> bool {
-        self.file.err.is_some()
+impl SymbolNameResolver for SymbolNameTable {
+
+    fn refresh(&mut self) {}
+
+    fn cleanup(&mut self) {
+        self.file.close();
     }
 
     fn debug_info(&self) -> SymTabDebugInfo {
@@ -54,18 +58,8 @@ impl SymbolTable {
         }
     }
 
-    fn size(&self) -> usize {
-        self.index.names.len()
-    }
-
-    fn refresh(&mut self) {}
-
-    fn debug_string(&self) -> String {
-        format!(
-            "SymbolTable{{ f = {} , sz = {} }}",
-            self.file.file_path(),
-            self.index.values.length()
-        )
+    fn is_dead(&self) -> bool {
+        self.file.err.is_some()
     }
 
     fn resolve(&mut self, addr: u64) -> String {
@@ -79,9 +73,12 @@ impl SymbolTable {
         }
         String::new()
     }
+}
 
-    fn cleanup(&mut self) {
-        self.file.close();
+impl SymbolNameTable {
+
+    fn size(&self) -> usize {
+        self.index.names.len()
     }
 
     fn symbol_name(&mut self, idx: usize) -> Result<String> {

@@ -20,6 +20,7 @@ pub struct SymbolCache {
     metrics: SymtabMetrics,
 }
 
+#[derive(Copy, Clone)]
 pub struct CacheOptions {
     pub pid_cache_options: GCacheOptions,
     pub build_id_cache_options: GCacheOptions,
@@ -28,7 +29,7 @@ pub struct CacheOptions {
 }
 
 impl SymbolCache {
-    pub fn new(options: CacheOptions, metrics: &SymtabMetrics) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(options: CacheOptions, metrics: SymtabMetrics) -> Result<Self, Box<dyn std::error::Error>> {
         if metrics.is_none() {
             panic!("metrics is nil");
         }

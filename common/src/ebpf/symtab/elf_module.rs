@@ -7,18 +7,7 @@ use crate::ebpf::symtab::elf::buildid::BuildIdentified;
 use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
 use crate::ebpf::symtab::stat::stat_from_file_info;
 use crate::error::Error::NotFound;
-
-pub struct ElfTable {
-    fs: String,
-    elf_file_path: String,
-    table: Box<dyn SymbolNameResolver>,
-    base: u64,
-    loaded: bool,
-    loaded_cached: bool,
-    err: Option<dyn Error>,
-    options: ElfTableOptions,
-    proc_map: ProcMap,
-}
+use crate::error::Result;
 
 pub struct ElfTableOptions {
     pub(crate) elf_cache: ElfCache,
@@ -27,16 +16,12 @@ pub struct ElfTableOptions {
 }
 
 pub struct SymbolOptions {
-    pub go_table_fallback: bool,
     pub python_full_file_path: bool
 }
 
 impl Default for SymbolOptions {
     fn default() -> Self {
-        Self {
-            go_table_fallback: false,
-            python_full_file_path: false
-        }
+        Self { python_full_file_path: false }
     }
 }
 
@@ -48,6 +33,18 @@ trait SymbolNameResolver {
     fn resolve(&self, pc: u64) -> String;
     fn is_dead(&self) -> bool;
     fn cleanup(&mut self);
+}
+
+pub struct ElfTable {
+    fs: String,
+    elf_file_path: String,
+    table: Box<dyn SymbolNameResolver>,
+    pub(crate) base: u64,
+    loaded: bool,
+    loaded_cached: bool,
+    err: Option<dyn Error>,
+    options: ElfTableOptions,
+    proc_map: ProcMap,
 }
 
 impl ElfTable {
@@ -67,9 +64,7 @@ impl ElfTable {
     }
 
     fn load(&mut self) {
-        if self.loaded {
-            return;
-        }
+        if self.loaded { return; }
         self.loaded = true;
         let fs_elf_file_path = PathBuf::from(&self.fs).join(&self.elf_file_path);
 
@@ -150,6 +145,7 @@ impl ElfTable {
                 return;
             }
         };
+
         self.table = symbols;
         if build_id.is_empty() {
             self.options.elf_cache.cache_by_stat(stat_from_file_info(&file_info), &symbols);
@@ -158,7 +154,16 @@ impl ElfTable {
         }
     }
 
-    fn resolve(&mut self, mut pc: u64) -> String {
+    fn create_symbol_table(&self, me: &mut MappedElfFile) -> Result<dyn SymbolNameResolver> {
+        match me.new_symbol_table() {
+            Ok(table) => Ok(table),
+            Err(sym_err) => {
+                return Err(sym_err);
+            }
+        }
+    }
+
+    pub(crate) fn resolve(&mut self, mut pc: u64) -> String {
         if !self.loaded {
             self.load();
         }
@@ -185,6 +190,9 @@ impl ElfTable {
         self.table.resolve(pc)
     }
 
+    pub fn cleanup(&mut self) {
+        self.table.cleanup();
+    }
 }
 
 impl ElfTableOptions {
@@ -201,9 +209,8 @@ impl ElfTableOptions {
 }
 
 impl SymbolOptions {
-    fn new(go_table_fallback: bool, python_full_file_path: bool) -> Self {
+    fn new(python_full_file_path: bool) -> Self {
         Self {
-            go_table_fallback,
             python_full_file_path
         }
     }

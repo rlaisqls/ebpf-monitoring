@@ -9,7 +9,7 @@ pub struct metrics {
     pub pprofs_total: CounterVec,
     pub pprof_bytes_total: CounterVec,
     pub pprof_samples_total: CounterVec,
-    pub ebpf_metrics: *Metrics
+    pub ebpf_metrics: Metrics
 }
 
 impl metrics {

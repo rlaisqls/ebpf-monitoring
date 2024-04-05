@@ -8,6 +8,7 @@ pub mod wait_group;
 pub mod reader;
 pub mod perf_event;
 pub mod epoll;
+pub mod symtab;
 
 pub(crate) const PERF_EVENT_IOC_ENABLE: core::ffi::c_int = 9216;
 pub(crate) const PERF_EVENT_IOC_DISABLE: core::ffi::c_int = 9217;

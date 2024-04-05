@@ -2,7 +2,6 @@ pub mod symbols;
 pub mod elf_cache;
 pub mod gcache;
 pub mod symtab;
-pub mod gosym;
 pub mod kallsyms;
 pub mod proc;
 pub mod procmap;
