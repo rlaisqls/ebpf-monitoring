@@ -1,25 +1,19 @@
 use crate::ebpf::symtab::symtab::SymbolTable;
 
-#[derive(Debug)]
-pub struct SymbolTab {
-    pub(crate) symbols: Vec<Sym>,
-    base: u64,
-}
-
-#[derive(Debug)]
-pub struct Sym {
-    start: u64,
-    name: String,
-}
-
 pub struct Symbol {
     pub(crate) start: u64,
     pub(crate) name: String,
     pub(crate) module: String
 }
 
+#[derive(Debug)]
+pub struct SymbolTab {
+    pub(crate) symbols: Vec<Symbol>,
+    base: u64,
+}
+
 impl SymbolTab {
-    pub(crate) fn new(symbols: Vec<Sym>) -> Self {
+    pub(crate) fn new(symbols: Vec<Symbol>) -> Self {
         SymbolTab { symbols, base: 0 }
     }
 
@@ -34,13 +28,11 @@ impl SymbolTab {
 
 impl SymbolTable for SymbolTab {
 
-    fn refresh(&mut self) {
-    }
+    fn refresh(&mut self) {}
 
-    fn cleanup(&mut self) {
-    }
+    fn cleanup(&mut self) {}
 
-    fn resolve(&self, addr: u64) -> Option<&Sym> {
+    fn resolve(&self, addr: u64) -> Option<&Symbol> {
         if self.symbols.is_empty() {
             return None;
         }
