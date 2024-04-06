@@ -3,7 +3,7 @@ use prometheus::Registry;
 use crate::ebpf::metrics::python::PythonMetrics;
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct Metrics {
     pub symtab: SymtabMetrics
 }

@@ -2,7 +2,7 @@ use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
 use crate::error::Error::{InvalidData, NotFound};
 use crate::error::Result;
 
-#[derive(Debug, Copy)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct BuildID {
     id: String,
     typ: String,
@@ -12,20 +12,18 @@ impl BuildID {
     fn new(id: String, typ: String) -> Self {
         BuildID { id, typ }
     }
-
     fn empty(&self) -> bool {
         self.id.is_empty() || self.typ.is_empty()
     }
-
     fn is_gnu(&self) -> bool {
         self.typ == "gnu"
     }
 }
 
 pub trait BuildIdentified {
-    fn build_id(&self) -> Result<BuildID>;
-    fn go_build_id(&self) -> Result<BuildID>;
-    fn gnu_build_id(&self) -> Result<BuildID>;
+    fn build_id(&mut self) -> Result<BuildID>;
+    fn go_build_id(&mut self) -> Result<BuildID>;
+    fn gnu_build_id(&mut self) -> Result<BuildID>;
 }
 
 impl BuildIdentified for MappedElfFile {

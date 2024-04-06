@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::os::unix::io::{FromRawFd, OwnedFd, AsRawFd, AsFd, RawFd, BorrowedFd};
 
-use libc::{c_int, ssize_t};
+use libc::c_int;
 use nix::sys::epoll::{
     epoll_create1, epoll_ctl, epoll_wait, EpollEvent, EpollFlags, EpollCreateFlags, EpollOp,
 };

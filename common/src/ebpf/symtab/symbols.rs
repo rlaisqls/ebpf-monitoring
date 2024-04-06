@@ -86,7 +86,7 @@ impl SymbolCache {
 
     fn init_kallsyms(&mut self) -> SymbolTab {
         let mut kallsyms = new_kallsyms().unwrap_or_else(|err| {
-            error!(self.logger, "kallsyms init fail"; "err" => err);
+            error!("kallsyms init fail err: {}", err);
             SymbolTab::new(Vec::new())
         });
 

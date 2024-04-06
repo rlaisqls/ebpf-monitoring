@@ -11,14 +11,15 @@ pub trait Resource {
     fn cleanup(&mut self);
 }
 
-pub struct GCache<K: Hash + Eq + Clone, V: Resource> {
+#[derive(Eq, PartialEq)]
+pub struct GCache<K: Eq + Clone, V: Resource> {
     options: GCacheOptions,
     round_cache: HashMap<K, Entry<V>>,
     lru_cache: LruCache<K, Entry<V>>,
     round: i32,
 }
 
-impl<K: Hash + Eq + Clone, V: Resource> GCache<K, V> {
+impl<K: Eq + Clone, V: Resource> GCache<K, V> {
     pub fn new(options: GCacheOptions) -> Self {
         let lru_cache_size = NonZeroUsize::try_from(options.size).unwrap();
         let lru_cache = LruCache::<K, Entry<V>>::new(lru_cache_size);
@@ -118,7 +119,7 @@ pub struct Entry<V> {
     round: i32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct GCacheOptions {
     pub size: usize,
     pub keep_rounds: i32,

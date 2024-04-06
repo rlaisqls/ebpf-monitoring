@@ -59,7 +59,8 @@ impl SymbolNameResolver for SymbolNameTable {
     }
 
     fn is_dead(&self) -> bool {
-        self.file.err.is_some()
+        // self.file.err.is_some()
+        false
     }
 
     fn resolve(&mut self, addr: u64) -> String {

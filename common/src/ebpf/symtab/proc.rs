@@ -9,6 +9,7 @@ use crate::ebpf::symtab::elf_module::{ElfTable, ElfTableOptions};
 use crate::ebpf::symtab::procmap::ProcMap;
 use crate::ebpf::symtab::symtab::SymbolTable;
 use crate::ebpf::symtab::table::Symbol;
+use crate::ebpf::symtab::gcache::Resource;
 
 pub struct ProcTable {
     ranges: Vec<Arc<ElfRange>>,
@@ -36,7 +37,7 @@ pub struct ElfRange {
     elf_table: Option<ElfTable>,
 }
 
-impl SymbolTable for ProcTable {
+impl Resource for ProcTable {
 
     fn refresh(&mut self) {
         if self.err.is_some() {
@@ -60,6 +61,9 @@ impl SymbolTable for ProcTable {
             .map(|_, table| table.cleanup() )
             .collect();
     }
+}
+
+impl SymbolTable for ProcTable {
 
     fn resolve(&mut self, pc: u64) -> Symbol {
         if pc == 0xcccccccccccccccc || pc == 0x9090909090909090 {

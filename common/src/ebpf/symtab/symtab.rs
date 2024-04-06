@@ -12,7 +12,7 @@ pub trait SymbolNameResolver {
     fn cleanup(&mut self);
     fn debug_info(&self) -> SymTabDebugInfo;
     fn is_dead(&self) -> bool;
-    fn resolve(&self, addr: u64) -> String;
+    fn resolve(&mut self, addr: u64) -> String;
 }
 
 pub struct NoopSymbolNameResolver;

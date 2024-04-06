@@ -2,8 +2,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
-use anyhow::bail;
-use crate::error::Error;
 
 // Define the Label struct
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,7 +33,7 @@ impl Hash for Label {
 }
 
 #[derive(Debug, Clone)]
-pub struct Labels(Vec<Label>);
+pub struct Labels(pub Vec<Label>);
 
 impl Labels {
     pub fn new(labels: Vec<Label>) -> Self { Self(labels) }

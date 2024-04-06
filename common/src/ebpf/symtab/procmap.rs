@@ -1,7 +1,7 @@
 use std::io::{self, BufRead};
 use std::str::FromStr;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ProcMapPermissions {
     read: bool,
     write: bool,
@@ -10,7 +10,7 @@ pub struct ProcMapPermissions {
     private: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ProcMap {
     pub(crate) start_addr: u64,
     pub(crate) end_addr: u64,

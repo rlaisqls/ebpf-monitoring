@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::convert::From;
 
 pub struct PCIndex {

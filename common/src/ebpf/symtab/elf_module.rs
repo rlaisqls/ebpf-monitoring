@@ -2,19 +2,24 @@ use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::ebpf::symtab::elf::symbol_table::SymbolNameTable;
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 use crate::ebpf::symtab::elf::buildid::BuildIdentified;
 use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
+use crate::ebpf::symtab::elf_cache::ElfCache;
+use crate::ebpf::symtab::procmap::ProcMap;
 use crate::ebpf::symtab::stat::stat_from_file_info;
-use crate::error::Error::NotFound;
+use crate::error::Error::{ELFError, NotFound};
 use crate::error::Result;
 
+#[derive(Eq, PartialEq)]
 pub struct ElfTableOptions {
     pub(crate) elf_cache: ElfCache,
     pub(crate) metrics: SymtabMetrics,
     pub(crate) symbol_options: SymbolOptions,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SymbolOptions {
     pub python_full_file_path: bool
 }
@@ -25,16 +30,13 @@ impl Default for SymbolOptions {
     }
 }
 
-struct ElfCache;
-
-struct ProcMap;
-
 trait SymbolNameResolver {
     fn resolve(&self, pc: u64) -> String;
     fn is_dead(&self) -> bool;
     fn cleanup(&mut self);
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ElfTable {
     fs: String,
     elf_file_path: String,
@@ -42,9 +44,9 @@ pub struct ElfTable {
     pub(crate) base: u64,
     loaded: bool,
     loaded_cached: bool,
-    err: Option<dyn Error>,
     options: ElfTableOptions,
     proc_map: ProcMap,
+    err: Option<crate::error::Error>
 }
 
 impl ElfTable {
@@ -57,9 +59,9 @@ impl ElfTable {
             base: 0,
             loaded: false,
             loaded_cached: false,
-            err: None,
             options,
             proc_map,
+            err: None,
         }
     }
 
@@ -154,7 +156,7 @@ impl ElfTable {
         }
     }
 
-    fn create_symbol_table(&self, me: &mut MappedElfFile) -> Result<dyn SymbolNameResolver> {
+    fn create_symbol_table(&self, me: &mut MappedElfFile) -> Result<SymbolNameTable> {
         match me.new_symbol_table() {
             Ok(table) => Ok(table),
             Err(sym_err) => {
@@ -177,7 +179,7 @@ impl ElfTable {
         } else if !self.table.is_dead() {
             return String::new();
         } else if !self.loaded_cached {
-            self.err = Some(String::from("Table is dead"));
+            self.err = Some(ELFError("Table is dead".to_string()));
             return String::new();
         }
 

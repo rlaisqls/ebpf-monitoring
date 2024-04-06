@@ -29,7 +29,6 @@ trait SamplesCollector {
     fn collect_profiles(&self, callback: CollectProfilesCallback) -> Result<(), String>;
 }
 
-#[derive(Copy, Clone)]
 struct ProfileSample<'a> {
     target: &'a Target,
     pid: u32,
@@ -75,11 +74,11 @@ impl ProfileBuilders {
     }
 
     fn add_sample(&mut self, sample: ProfileSample) {
-        let bb = self.builder_for_sample(sample);
+        let bb = self.builder_for_sample(sample.borrow());
         bb.create_sample(sample);
     }
 
-    fn builder_for_sample(&mut self, sample: ProfileSample) -> &mut ProfileBuilder {
+    fn builder_for_sample(&mut self, sample: &ProfileSample) -> &mut ProfileBuilder {
         let (labels_hash, labels) = sample.target.clone().labels();
 
         let mut k = BuilderHashKey {
@@ -98,7 +97,7 @@ impl ProfileBuilders {
                 (
                     vec![ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds"), }],
                     ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds") },
-                    Duration::from_secs(1).as_nanos() / self.opt.sample_rate,
+                    (Duration::from_secs(1).as_nanos() as i64) / self.opt.sample_rate,
                 )
             } else {
                 (
@@ -150,7 +149,22 @@ impl Default for ProfileBuilder {
             locations: HashMap::new(),
             functions: HashMap::new(),
             sample_hash_to_sample: HashMap::new(),
-            profile: Profile::default(),
+            profile: Profile {
+                sample_type: vec![],
+                sample: vec![],
+                mapping: vec![],
+                location: vec![],
+                function: vec![],
+                string_table: vec![],
+                drop_frames: 0,
+                keep_frames: 0,
+                time_nanos: 0,
+                duration_nanos: 0,
+                period_type: None,
+                period: 0,
+                comment: vec![],
+                default_sample_type: 0,
+            },
             labels: Labels(vec![]),
             tmp_locations: vec![],
             tmp_location_ids: vec![],
@@ -167,7 +181,7 @@ impl ProfileBuilder {
             location_id: Vec::new(),
             label: vec![],
         };
-        for (s) in input_sample.stack {
+        for s in input_sample.stack {
             sample.location_id.push(self.add_location(s.as_str()).id);
         }
         self.profile.sample.push(sample);
@@ -248,26 +262,5 @@ impl ProfileBuilder {
         self.profile.write_uncompressed(&mut gzip_writer)?;
         gzip_writer.finish()?;
         Ok(0)
-    }
-}
-
-impl Default for Profile {
-    fn default() -> Self {
-        Self {
-            sample_type: vec![],
-            sample: vec![],
-            mapping: vec![],
-            location: vec![],
-            function: vec![],
-            string_table: vec![],
-            drop_frames: 0,
-            keep_frames: 0,
-            time_nanos: 0,
-            duration_nanos: 0,
-            period_type: None,
-            period: 0,
-            comment: vec![],
-            default_sample_type: 0,
-        }
     }
 }

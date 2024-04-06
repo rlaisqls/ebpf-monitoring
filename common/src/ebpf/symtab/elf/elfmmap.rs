@@ -23,7 +23,6 @@ pub struct MappedElfFile {
     pub progs: Vec<ProgramHeader>,
 
     pub fpath: PathBuf,
-    pub err:   Option<Err>,
     pub fd: Option<File>,
 
     pub string_cache: HashMap<usize, String>,
@@ -38,7 +37,6 @@ impl MappedElfFile {
     pub fn new(fpath: PathBuf) -> io::Result<Self> {
         let mut res = Self {
             fpath,
-            err: None,
             fd: None,
             file_header: Default::default(),
             sections: Vec::new(),

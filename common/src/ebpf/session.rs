@@ -41,7 +41,7 @@ mod profile {
 
 type CollectProfilesCallback = Box<dyn Fn(Target, Vec<String>, u64, u32, bool) + Send + 'static>;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct SessionOptions {
     pub collect_user: bool,
     pub collect_kernel: bool,
@@ -111,7 +111,7 @@ pub struct Session<'a> {
     perf_events: ()
 }
 
-impl Session {
+impl Session<'_> {
     pub fn new(target_finder: &TargetFinder, opts: SessionOptions) -> Result<Self> {
         let sym_cache = SymbolCache::new(opts.cache_options, opts.metrics.borrow().symtab);
         bump_memlock_rlimit()?;

@@ -5,6 +5,7 @@ use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
 use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo, GCacheOptions, SymbolNameResolver};
 use crate::ebpf::symtab::stat::Stat;
 
+#[derive(Eq, PartialEq)]
 pub struct ElfCache {
     build_id_cache: Mutex<GCache<BuildID, SymbolNameResolver>>,
     same_file_cache: Mutex<GCache<Stat, SymbolNameResolver>>,
@@ -14,13 +15,14 @@ impl ElfCache {
     pub fn new(build_id_cache_options: GCacheOptions, same_file_cache_options: GCacheOptions) -> Result<Self, Box<dyn std::error::Error>> {
         let build_id_cache = Mutex::new(GCache::<BuildID, SymbolNameResolver>::new(build_id_cache_options)?);
         let same_file_cache = Mutex::new(GCache::<Stat, SymbolNameResolver>::new(same_file_cache_options)?);
+
         Ok(Self { build_id_cache, same_file_cache })
     }
 
     pub fn get_symbols_by_build_id(&self, build_id: BuildID) -> Option<SymbolNameResolver> {
         let res = self.build_id_cache.lock().unwrap().get(build_id)?;
         if res.is_dead() {
-            self.build_id_cache.lock().unwrap().remove(build_id);
+            self.build_id_cache.lock().unwrap().remove(build_id.borrow());
             return None;
         }
         Some(res)
