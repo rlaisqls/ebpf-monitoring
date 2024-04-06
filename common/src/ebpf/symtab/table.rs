@@ -1,3 +1,4 @@
+use crate::ebpf::symtab::gcache::Resource;
 use crate::ebpf::symtab::symtab::SymbolTable;
 
 pub struct Symbol {
@@ -26,10 +27,14 @@ impl SymbolTab {
     }
 }
 
+impl Resource for SymbolTab {
+    fn refresh(&mut self) {}
+    fn cleanup(&mut self) {}
+}
+
 impl SymbolTable for SymbolTab {
 
     fn refresh(&mut self) {}
-
     fn cleanup(&mut self) {}
 
     fn resolve(&self, addr: u64) -> Option<&Symbol> {

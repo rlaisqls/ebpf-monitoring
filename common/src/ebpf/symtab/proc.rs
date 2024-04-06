@@ -38,32 +38,23 @@ pub struct ElfRange {
 }
 
 impl Resource for ProcTable {
-
     fn refresh(&mut self) {
-        if self.err.is_some() {
-            return;
-        }
-
-        let path = format!("/proc/{}/maps", self.options.pid.to_string());
-        match fs::read_to_string(&path) {
-            Ok(proc_maps) => {
-                self.err = Some(self.refresh_proc_map(proc_maps).into());
-            },
-            Err(e) => {
-                self.err = Some(e.into());
-            }
-        }
+        self.refresh()
     }
 
     fn cleanup(&mut self) {
-        self.file_to_table
-            .iter_mut()
-            .map(|_, table| table.cleanup() )
-            .collect();
+       self.cleanup()
     }
 }
 
 impl SymbolTable for ProcTable {
+    fn refresh(&mut self) {
+        self.refresh()
+    }
+
+    fn cleanup(&mut self) {
+        self.cleanup()
+    }
 
     fn resolve(&mut self, pc: u64) -> Symbol {
         if pc == 0xcccccccccccccccc || pc == 0x9090909090909090 {
@@ -142,6 +133,29 @@ impl ProcTable {
             root_fs: PathBuf::from(format!("/proc/{}/root", options.pid.to_string())),
             err: None,
         }
+    }
+
+    fn refresh(&mut self) {
+        if self.err.is_some() {
+            return;
+        }
+
+        let path = format!("/proc/{}/maps", self.options.pid.to_string());
+        match fs::read_to_string(&path) {
+            Ok(proc_maps) => {
+                self.err = Some(self.refresh_proc_map(proc_maps).into());
+            },
+            Err(e) => {
+                self.err = Some(e.into());
+            }
+        }
+    }
+
+    fn cleanup(&mut self) {
+        self.file_to_table
+            .iter_mut()
+            .map(|_, table| table.cleanup() )
+            .collect();
     }
 
     fn refresh_proc_map(&mut self, proc_maps: String) -> Result<(), String> {
