@@ -32,14 +32,14 @@ impl<K: Eq + Clone, V: Resource> GCache<K, V> {
         self.round += 1;
     }
 
-    pub fn get(&mut self, k: K) -> V {
-        if let Some(entry) = self.lru_cache.get_mut(&k) {
+    pub fn get(&mut self, k: &K) -> V {
+        if let Some(entry) = self.lru_cache.get_mut(k) {
             if entry.round != self.round {
                 entry.round = self.round;
                 entry.v.refresh();
             }
             entry.v.clone()
-        } else if let Some(entry) = self.round_cache.get_mut(&k) {
+        } else if let Some(entry) = self.round_cache.get_mut(k) {
             if entry.round != self.round {
                 entry.round = self.round;
                 entry.v.refresh();
@@ -90,9 +90,9 @@ impl<K: Eq + Clone, V: Resource> GCache<K, V> {
         self.round_cache.len()
     }
 
-    pub fn remove(&mut self, k: K) {
-        self.lru_cache.pop(&k);
-        self.round_cache.remove(&k);
+    pub fn remove(&mut self, k: &K) {
+        self.lru_cache.pop(k);
+        self.round_cache.remove(k);
     }
 
     pub fn each(&self, f: impl Fn(K, V, i32)) {

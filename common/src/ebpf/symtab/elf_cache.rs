@@ -19,10 +19,10 @@ impl ElfCache {
         Ok(Self { build_id_cache, same_file_cache })
     }
 
-    pub fn get_symbols_by_build_id(&self, build_id: BuildID) -> Option<SymbolNameResolver> {
+    pub fn get_symbols_by_build_id(&self, build_id: &BuildID) -> Option<SymbolNameResolver> {
         let res = self.build_id_cache.lock().unwrap().get(build_id)?;
         if res.is_dead() {
-            self.build_id_cache.lock().unwrap().remove(build_id.borrow());
+            self.build_id_cache.lock().unwrap().remove(build_id);
             return None;
         }
         Some(res)
@@ -35,9 +35,9 @@ impl ElfCache {
     }
 
     pub fn get_symbols_by_stat(&self, s: Stat) -> Option<SymbolNameResolver> {
-        let res = self.same_file_cache.lock().unwrap().get(s)?;
+        let res = self.same_file_cache.lock().unwrap().get(&s)?;
         if res.is_dead() {
-            self.same_file_cache.lock().unwrap().remove(s);
+            self.same_file_cache.lock().unwrap().remove(&s);
             return None;
         }
         Some(res)
