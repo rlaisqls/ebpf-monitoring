@@ -2,15 +2,16 @@ mod profiles;
 mod pprof;
 
 use std::collections::HashMap;
-use std::hash::Hasher;
-use std::io::{self, Write};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io::{self, Read, Write};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use crate::ebpf::pprof::profiles::{Function, Label, Line, Location, Profile, Sample, ValueType};
 
 use crate::common::labels::Labels;
+use crate::ebpf::pprof::pprof::PProfBuilder;
 use crate::ebpf::sd::target::Target;
 use crate::error::Error::{InvalidData};
 use crate::error::Result;
@@ -28,6 +29,7 @@ trait SamplesCollector {
     fn collect_profiles(&self, callback: CollectProfilesCallback) -> Result<(), String>;
 }
 
+#[derive(Copy, Clone)]
 struct ProfileSample<'a> {
     target: &'a Target,
     pid: u32,
@@ -46,26 +48,30 @@ pub fn collect(builders: &mut ProfileBuilders, collector: &dyn SamplesCollector)
     })
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct BuildersOptions {
+    pub sample_rate: i64,
+    pub per_pid_profile: bool,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct BuilderHashKey {
+    pub labels_hash: u64,
+    pub pid: u32,
+    pub sample_type: SampleType,
+}
+
 pub struct ProfileBuilders {
-    pub builders: HashMap<u64, ProfileBuilder>,
-    sample_rate: i64,
+    pub builders: HashMap<BuilderHashKey, ProfileBuilder>,
+    pub opt: BuildersOptions
 }
 
 impl ProfileBuilders {
-    pub fn new(sample_rate: i64) -> Self {
+    pub fn new(options: BuildersOptions) -> Self {
         Self {
             builders: HashMap::new(),
-            sample_rate,
+            opt: options,
         }
-    }
-
-    pub fn builder_for_target(&mut self, hash: u64, labels: Labels) -> &mut ProfileBuilder {
-        self.builders
-            .entry(hash)
-            .or_insert_with(|| ProfileBuilder::new(
-                labels,
-                self.sample_rate
-            ))
     }
 
     fn add_sample(&mut self, sample: ProfileSample) {
@@ -74,71 +80,54 @@ impl ProfileBuilders {
     }
 
     fn builder_for_sample(&mut self, sample: ProfileSample) -> &mut ProfileBuilder {
-        let (labels_hash, labels) = sample.target.labels();
+        let (labels_hash, labels) = sample.target.clone().labels();
 
         let mut k = BuilderHashKey {
             labels_hash,
             sample_type: sample.sample_type,
+            pid: 0,
         };
         if self.opt.per_pid_profile {
             k.pid = sample.pid;
         }
 
-        let res = self.builders.entry(k).or_insert_with(|| {
-            let (sample_type, period_type, period) = if sample.sample_type == SampleTypeCpu {
+        let mut b = PProfBuilder::default();
+        let from_b = |s: &str| { b.add_string(&s.to_string()) };
+        self.builders.entry(k).or_insert_with(|| {
+            let (sample_type, period_type, period) = if sample.sample_type == SAMPLE_TYPE_CPU {
                 (
-                    vec![ValueType {
-                        r#type: "cpu".to_string(),
-                        unit: "nanoseconds".to_string(),
-                    }],
-                    ValueType {
-                        r#type: "cpu".to_string(),
-                        unit: "nanoseconds".to_string(),
-                    },
-                    std::time::Duration::from_secs(1).as_nanos() / self.opt.sample_rate,
+                    vec![ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds"), }],
+                    ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds") },
+                    Duration::from_secs(1).as_nanos() / self.opt.sample_rate,
                 )
             } else {
                 (
                     vec![
-                        ValueType {
-                            r#type: "alloc_objects".to_string(),
-                            unit: "count".to_string(),
-                        },
-                        ValueType {
-                            r#type: "alloc_space".to_string(),
-                            unit: "bytes".to_string(),
-                        },
+                        ValueType { r#type: from_b("alloc_objects"), unit: from_b("count") },
+                        ValueType { r#type: from_b("alloc_space"), unit: from_b("bytes"), },
                     ],
-                    ValueType {
-                        r#type: "space".to_string(),
-                        unit: "bytes".to_string(),
-                    },
-                    512 * 1024, // todo
+                    ValueType { r#type: b.add_string(&"space".to_string()), unit: from_b("bytes") },
+                    512 * 1024,
                 )
             };
-
-            let mut builder = ProfileBuilder {
-                locations: HashMap::new(),
-                functions: HashMap::new(),
-                sample_hash_to_sample: HashMap::new(),
+            ProfileBuilder {
                 labels: labels.clone(),
                 profile: Profile {
-                    mapping: vec![Mapping { id: 1 }],
                     sample_type,
-                    period,
-                    period_type,
                     time_nanos: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .expect("Time went backwards")
-                        .as_nanos(),
+                        .as_nanos() as i64,
+                    duration_nanos: period as i64,
+                    period_type: Some(period_type),
+                    ..Default::default()
                 },
                 tmp_location_ids: Vec::with_capacity(128),
                 tmp_locations: Vec::with_capacity(128),
-            };
-            builder
-        });
-
-        res
+                pprof_builder: b,
+                ..Default::default()
+            }
+        })
     }
 }
 
@@ -151,37 +140,62 @@ struct ProfileBuilder {
 
     pub tmp_locations: Vec<Location>,
     pub tmp_location_ids: Vec<u8>,
+
+    pub pprof_builder: PProfBuilder
 }
 
-impl ProfileBuilder {
-    fn new(labels: Labels, sample_rate: i64) -> Self {
+impl Default for ProfileBuilder {
+    fn default() -> Self {
         Self {
             locations: HashMap::new(),
             functions: HashMap::new(),
             sample_hash_to_sample: HashMap::new(),
-            profile: Profile {
-                sample_type: ,
-                time_nanos: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos() as i64,
-                ..Default::default()
-            },
-            labels,
-            tmp_locations: Vec::with_capacity(128),
-            tmp_location_ids: Vec::with_capacity(128),
+            profile: Profile::default(),
+            labels: Labels(vec![]),
+            tmp_locations: vec![],
+            tmp_location_ids: vec![],
+            pprof_builder: Default::default(),
         }
     }
+}
 
-    fn create_sample(&mut self, stacktrace: Vec<String>, value: u64) {
-        let scaled_value = (value as i64) * self.profile.period;
+impl ProfileBuilder {
+
+    fn create_sample(&mut self, input_sample: ProfileSample) {
         let mut sample = Sample {
-            value: vec![scaled_value],
-            ..Default::default()
+            value: if input_sample.sample_type == SampleType::Cpu { vec![0] } else { vec![0, 0] },
+            location_id: Vec::new(),
+            label: vec![],
         };
-        for (_, s) in stacktrace.iter().enumerate() {
-            sample.location_id.push(self.add_location(s).id);
+        for (s) in input_sample.stack {
+            sample.location_id.push(self.add_location(s.as_str()).id);
         }
+        self.profile.sample.push(sample);
+    }
+
+    fn create_sample_or_add_value(&mut self, input_sample: &ProfileSample) {
+        self.tmp_locations.clear();
+        self.tmp_location_ids.clear();
+
+        for s in &input_sample.stack {
+            let loc = self.add_location(s);
+            self.tmp_locations.push(loc.clone());
+            self.tmp_location_ids.push(loc.id as u8);
+        }
+
+        let mut hasher = DefaultHasher::new();
+        self.tmp_location_ids.hash(&mut hasher);
+        let h = hasher.finish();
+
+        if let Some(sample) = self.sample_hash_to_sample.get(&h) {
+            self.add_value(input_sample, sample);
+            return;
+        }
+
+        let sample = self.new_sample(input_sample);
+        self.add_value(input_sample, &sample);
+        sample.locations.copy_from_slice(&self.tmp_locations);
+        self.sample_hash_to_sample.insert(h, sample.clone());
         self.profile.sample.push(sample);
     }
 
@@ -218,9 +232,7 @@ impl ProfileBuilder {
             name: function.to_string().parse().unwrap(),
             system_name: 0,
             filename: 0,
-            start_line: 0,
-            unknown_fields: Default::default(),
-            cached_size: Default::default(),
+            start_line: 0
         };
 
         self.functions.insert(function.to_string(), func.clone());
@@ -230,9 +242,32 @@ impl ProfileBuilder {
     }
 
     pub fn write(&self, dst: &mut dyn Write) -> Result<()> {
-        let mut gz_encoder = GzEncoder::new(dst, Compression::default());
-        self.profile
-            .encode(&mut gz_encoder)
-            .map_err(|e| Err(InvalidData(format!("ebpf profile encode {}", e))));
+        let mut gzip_writer = GzEncoder::new(
+            &mut dst.borrow(), Compression::default()
+        );
+        self.profile.write_uncompressed(&mut gzip_writer)?;
+        gzip_writer.finish()?;
+        Ok(0)
+    }
+}
+
+impl Default for Profile {
+    fn default() -> Self {
+        Self {
+            sample_type: vec![],
+            sample: vec![],
+            mapping: vec![],
+            location: vec![],
+            function: vec![],
+            string_table: vec![],
+            drop_frames: 0,
+            keep_frames: 0,
+            time_nanos: 0,
+            duration_nanos: 0,
+            period_type: None,
+            period: 0,
+            comment: vec![],
+            default_sample_type: 0,
+        }
     }
 }

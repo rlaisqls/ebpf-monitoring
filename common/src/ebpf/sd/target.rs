@@ -62,7 +62,7 @@ impl Target {
         }
     }
 
-    fn labels(mut self) -> (u64, Labels) {
+    pub(crate) fn labels(mut self) -> (u64, Labels) {
         if !self.fingerprint_calculated {
             self.fingerprint = self.labels.hash();
             self.fingerprint_calculated = true;

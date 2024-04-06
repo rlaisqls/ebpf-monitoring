@@ -7,6 +7,7 @@ use std::fs::File;
 use log::error;
 use tokio::time::interval;
 use common::ebpf::pprof;
+use common::ebpf::pprof::BuildersOptions;
 use common::ebpf::sd::target::{LABEL_CONTAINER_ID, LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
 use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
 use common::ebpf::symtab::elf_module::SymbolOptions;
@@ -106,7 +107,9 @@ impl EbpfLinuxComponent {
     }
 
     async fn collect_profiles(&self) -> Result<()> {
-        let mut builders = pprof::ProfileBuilders::new(1000);
+        let mut builders = pprof::ProfileBuilders::new(
+            BuildersOptions { sample_rate: 1000, per_pid_profile: false }
+        );
         pprof::collect(&mut builders, &self.session).await?;
 
         for (_, builder) in builders.builders {
@@ -129,7 +132,7 @@ impl EbpfLinuxComponent {
             let appender = self.appendable.appender();
             if let Err(err) = appender.append(
                 builder.labels().clone(),
-                samples,
+                samples
             ) {
                 error!("ebpf pprof write", "err" => format!("{}", err));
                 return Err(OSError(format!("{}", err)));

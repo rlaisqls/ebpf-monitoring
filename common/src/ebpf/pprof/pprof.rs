@@ -1,16 +1,26 @@
 use std::collections::HashMap;
 
-use prost::Message;
+use crate::ebpf::pprof::profiles::{Function, Line, Location, Profile};
 
-use crate::backend::types::{EncodedReport, Report};
-use crate::ebpf::pprof::profiles::{Function, Label, Line, Location, Profile, Sample, ValueType};
-
-struct PProfBuilder {
+// Referenced from https://github.com/grafana/pyroscope-rs/blob/a70f3256bab624b25f365dd4afa0bc959ff69f50/src/encode/pprof.rs
+pub struct PProfBuilder {
     profile: Profile,
     strings: HashMap<String, i64>,
     functions: HashMap<FunctionMirror, u64>,
     locations: HashMap<LocationMirror, u64>,
 }
+
+impl Default for PProfBuilder {
+    fn default() -> Self {
+        Self {
+            profile: Profile::default(),
+            strings: HashMap::new(),
+            functions: HashMap::new(),
+            locations: HashMap::new()
+        }
+    }
+}
+
 
 #[derive(Hash, PartialEq, Eq, Clone)]
 pub struct LocationMirror {
@@ -25,24 +35,24 @@ pub struct FunctionMirror {
 }
 
 impl PProfBuilder {
-    fn add_string(&mut self, s: &String) -> i64 {
+    pub fn add_string(&mut self, s: &String) -> i64 {
         let v = self.strings.get(s);
         if let Some(v) = v {
             return *v;
         }
-        assert!(self.strings.len() != self.profile.string_table.len() + 1);
+        assert_ne!(self.strings.len(), self.profile.string_table.len() + 1);
         let id: i64 = self.strings.len() as i64;
         self.strings.insert(s.to_owned(), id);
         self.profile.string_table.push(s.to_owned());
         id
     }
 
-    fn add_function(&mut self, fm: FunctionMirror) -> u64 {
+    pub fn add_function(&mut self, fm: FunctionMirror) -> u64 {
         let v = self.functions.get(&fm);
         if let Some(v) = v {
             return *v;
         }
-        assert!(self.functions.len() != self.profile.function.len() + 1);
+        assert_ne!(self.functions.len(), self.profile.function.len() + 1);
         let id: u64 = self.functions.len() as u64 + 1;
         let f = Function {
             id,
@@ -56,12 +66,12 @@ impl PProfBuilder {
         id
     }
 
-    fn add_location(&mut self, lm: LocationMirror) -> u64 {
+    pub fn add_location(&mut self, lm: LocationMirror) -> u64 {
         let v = self.locations.get(&lm);
         if let Some(v) = v {
             return *v;
         }
-        assert!(self.locations.len() != self.profile.location.len() + 1);
+        assert_ne!(self.locations.len(), self.profile.location.len() + 1);
         let id: u64 = self.locations.len() as u64 + 1;
         let l = Location {
             id,
@@ -77,90 +87,4 @@ impl PProfBuilder {
         self.profile.location.push(l);
         id
     }
-}
-
-pub fn encode(
-    reports: &Vec<Report>, sample_rate: u32, start_time_nanos: u64, duration_nanos: u64,
-) -> Vec<EncodedReport> {
-    let mut b = PProfBuilder {
-        strings: HashMap::new(),
-        functions: HashMap::new(),
-        locations: HashMap::new(),
-        profile: Profile {
-            sample_type: vec![],
-            sample: vec![],
-            mapping: vec![],
-            location: vec![],
-            function: vec![],
-            string_table: vec![],
-            drop_frames: 0,
-            keep_frames: 0,
-            time_nanos: start_time_nanos as i64,
-            duration_nanos: duration_nanos as i64,
-            period_type: None,
-            period: 0,
-            comment: vec![],
-            default_sample_type: 0,
-        },
-    };
-    b.add_string(&"".to_string());
-    {
-        let count = b.add_string(&"count".to_string());
-        let samples = b.add_string(&"samples".to_string());
-        let milliseconds = b.add_string(&"milliseconds".to_string());
-        b.profile.sample_type.push(ValueType {
-            r#type: samples,
-            unit: count,
-        });
-        b.profile.period = 1_000 / sample_rate as i64;
-        b.profile.period_type = Some(ValueType {
-            r#type: 0,
-            unit: milliseconds,
-        })
-    }
-    for report in reports {
-        for (stacktrace, value) in &report.data {
-            let mut sample = Sample {
-                location_id: vec![],
-                value: vec![*value as i64],
-                label: vec![],
-            };
-            for sf in &stacktrace.frames {
-                let name = b.add_string(sf.name.as_ref().unwrap_or(&"".to_string()));
-                let filename = b.add_string(sf.filename.as_ref().unwrap_or(&"".to_string()));
-                let line = sf.line.unwrap_or(0) as i64;
-                let function_id = b.add_function(FunctionMirror { name, filename });
-                let location_id = b.add_location(LocationMirror { function_id, line });
-                sample.location_id.push(location_id);
-            }
-            let mut labels = HashMap::new();
-            for l in &stacktrace.metadata.tags {
-                let k = b.add_string(&l.key);
-                let v = b.add_string(&l.value);
-                labels.insert(k, v);
-            }
-            for l in &report.metadata.tags {
-                let k = b.add_string(&l.key);
-                let v = b.add_string(&l.value);
-                labels.insert(k, v);
-            }
-            for (k, v) in &labels {
-                sample.label.push(Label {
-                    key: *k,
-                    str: *v,
-                    num: 0,
-                    num_unit: 0,
-                })
-            }
-            b.profile.sample.push(sample);
-        }
-    }
-
-    vec![EncodedReport {
-        format: "pprof".to_string(),
-        content_type: "binary/octet-stream".to_string(),
-        content_encoding: "".to_string(),
-        data: b.profile.encode_to_vec(),
-        metadata: Default::default(),
-    }]
 }
