@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}, thread};
+use std::{collections::HashMap, fs, sync::{Arc, Mutex}, thread};
 use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
@@ -6,7 +6,9 @@ use std::borrow::Borrow;
 use std::io::{Cursor, Read};
 use std::ops::{Deref};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::path::Path;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::time::Duration;
 
 use byteorder::ReadBytesExt;
 use gimli::{LittleEndian};
@@ -29,7 +31,7 @@ use crate::ebpf::symtab::gcache::GCacheDebugInfo;
 use crate::ebpf::symtab::proc::ProcTableDebugInfo;
 use crate::ebpf::symtab::symbols::{CacheOptions, SymbolCache};
 use crate::ebpf::symtab::symtab::SymbolTable;
-use crate::ebpf::sync::PidOp;
+use crate::ebpf::sync::{PidOp, ProfilingType};
 use crate::ebpf::sync::PidOp::Dead;
 use crate::ebpf::wait_group::WaitGroup;
 use crate::error::Error::{InvalidData, OSError, SessionError};
@@ -67,16 +69,12 @@ struct Pids {
     all: HashMap<u32, ProcInfoLite>,
 }
 
-type ProfilingType = u8;
-
 #[derive(Debug)]
 struct ProcInfoLite {
     pid: u32,
     comm: String,
-    exe: String,
     typ: ProfilingType,
 }
-
 
 pub struct SessionDebugInfo {
     elf_cache: ElfCacheDebugInfo,
@@ -189,8 +187,9 @@ impl Session<'_> {
         self.wg.done();
     }
 
-    fn stop(&self) {
-        self.stop_and_wait();
+    fn stop(&mut self) {
+        self.stop_locked();
+        self.wg.done()
     }
 
     fn update(&mut self, options: SessionOptions) -> Result<(), String> {
@@ -203,12 +202,45 @@ impl Session<'_> {
         self.target_finder.update(args);
         let _guard = self.mutex.lock().unwrap();
         for pid in self.pids.unknown.iter() {
-            let target = self.target_finder.find_target(*pid);
+            let target = self.target_finder.find_target(pid.0);
             if let Some(target) = target {
-                self.start_profiling_locked(*pid, target);
-                self.pids.unknown.remove(pid);
+                self.start_profiling_locked(pid.0, target);
+                self.pids.unknown.remove(pid.0);
             }
         }
+    }
+
+    fn start_profiling_locked(&mut self, pid: &u32, target: Target) {
+        if !self.started {
+            return;
+        }
+        let typ = self.select_profiling_type(pid.clone(), &target);
+        // if typ.typ == ProfilingType::Python {
+        //     self.try_start_python_profiling(pid, target, typ)
+        // }
+        self.set_pid_config(pid, typ);
+    }
+
+    fn select_profiling_type(&self, pid: u32, target: &Target) -> ProcInfoLite {
+        if let Ok(exe_path) = fs::read_link(format!("/proc/{}/exe", pid)) {
+            if let Ok(comm) = fs::read_to_string(format!("/proc/{}/comm", pid)) {
+                let comm = comm.trim_end_matches('\n').to_string();
+                let exe = Path::new(&exe_path).file_name().unwrap_or_default().to_string_lossy();
+
+                info!("exe: {:?}, pid: {}", exe_path, pid);
+
+                return if self.options.python_enabled && (exe.starts_with("python") || exe == "uwsgi") {
+                    ProcInfoLite { pid, comm, typ: ProfilingType::Python }
+                } else {
+                    ProcInfoLite { pid, comm, typ: ProfilingType::FramePointers }
+                }
+            }
+        }
+
+        // Logging error
+        eprintln!("Failed to read proc information for pid: {}", pid);
+
+        ProcInfoLite { pid, comm: String::new(), typ: ProfilingType::TypeError }
     }
 
     fn read_events(
@@ -218,7 +250,7 @@ impl Session<'_> {
         dead_pids_events: Sender<u32>,
     ) {
         loop {
-            match self.events_reader.take().unwrap().read().unwrap() {
+            match self.events_reader.take().unwrap().read() {
                 Ok(record) => {
                     if record.lost_samples != 0 {
                         error!(
@@ -271,7 +303,7 @@ impl Session<'_> {
 
     fn process_pid_info_requests(&mut self) {
         for pid in self.pid_info_requests.take().unwrap() {
-            let target = self.target_finder.find_target(pid).unwrap().deref();
+            let target = self.target_finder.find_target(&pid).unwrap().deref();
             debug!("pid info request: pid={}, target={:?}", pid, target);
 
             let already_dead = self.pids.dead.contains(&pid);
@@ -281,11 +313,15 @@ impl Session<'_> {
             }
 
             if target.is_none() {
-                self.save_unknown_pid_locked(pid);
+                self.save_unknown_pid_locked(&pid);
             } else {
-                self.start_profiling_locked(pid, target.unwrap());
+                self.start_profiling_locked(&pid, target.unwrap());
             }
         }
+    }
+
+    fn save_unknown_pid_locked(&mut self, pid: &u32) {
+        self.pids.unknown.insert(pid.clone(), ());
     }
     
     fn process_dead_pids_events(&mut self) {
@@ -299,7 +335,7 @@ impl Session<'_> {
 
     fn process_pid_exec_requests(&mut self) {
         for pid in self.dead_pid_events.take().unwrap() {
-            let target = self.target_finder.find_target(pid);
+            let target = self.target_finder.find_target(&pid);
             info!("pid exec request: {}", pid);
             {
                 let _ = self.mutex.lock().unwrap();
@@ -308,9 +344,9 @@ impl Session<'_> {
                     continue;
                 }
                 if target.is_none() {
-                    self.save_unknown_pid_locked(pid);
+                    self.save_unknown_pid_locked(&pid);
                 } else {
-                    self.start_profiling_locked(pid, target.unwrap());
+                    self.start_profiling_locked(&pid, target.unwrap());
                 }
             }
         }
@@ -472,7 +508,7 @@ impl Session<'_> {
             if ck.kern_stack >= 0 {
                 known_stacks.insert(ck.kern_stack as u32, true);
             }
-            if let Some(labels) = self.target_finder.find_target(ck.pid) {
+            if let Some(labels) = self.target_finder.find_target(&ck.pid) {
                 if self.pids.dead.contains(&ck.pid) {
                     continue;
                 }
