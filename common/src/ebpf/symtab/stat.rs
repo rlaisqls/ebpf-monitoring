@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 
 #[cfg(target_os = "linux")]
-#[derive(Copy, Clone)]
+#[derive(Eq, PartialEq, Copy, Clone)]
 pub struct Stat {
     dev: u64,
     inode: u64,
@@ -25,7 +25,7 @@ pub fn stat_from_file_info(file_info: &fs::Metadata) -> Stat {
 }
 
 #[cfg(target_os = "macos")]
-#[derive(Clone, Copy)]
+#[derive(Eq, PartialEq, Clone, Copy, Hash)]
 pub struct Stat {
     dev: u64,
     inode: u64,

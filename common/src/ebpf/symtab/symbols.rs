@@ -1,4 +1,5 @@
 use log::{debug, error};
+use crate::error::Result;
 use crate::ebpf::symtab::elf_cache::{ElfCache, ElfCacheDebugInfo};
 use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo, GCacheOptions};
 use crate::ebpf::metrics::symtab::SymtabMetrics;
@@ -12,9 +13,9 @@ pub type PidKey = u32;
 // SymbolCache is responsible for resolving PC address to Symbol
 // maintaining a pid -> ProcTable cache
 // resolving kernel symbols
-pub struct SymbolCache {
-    pid_cache: GCache<PidKey, ProcTable>,
-    elf_cache: ElfCache,
+pub struct SymbolCache<'a> {
+    pid_cache: GCache<PidKey, ProcTable<'a>>,
+    elf_cache: ElfCache<'a>,
     kallsyms: Option<SymbolTab>,
     options: CacheOptions,
     metrics: SymtabMetrics,
@@ -28,14 +29,14 @@ pub struct CacheOptions {
     pub symbol_options: SymbolOptions,
 }
 
-impl SymbolCache {
-    pub fn new(options: CacheOptions, metrics: SymtabMetrics) -> Result<Self, Box<dyn std::error::Error>> {
+impl<'a> SymbolCache<'a> {
+    pub fn new(options: CacheOptions, metrics: &SymtabMetrics) -> Result<Self> {
         if metrics.is_none() {
             panic!("metrics is nil");
         }
 
-        let elf_cache = ElfCache::new(options.build_id_cache_options, options.same_file_cache_options)?;
-        let pid_cache = GCache::<PidKey, ProcTable>::new(options.pid_cache_options)?;
+        let elf_cache = ElfCache::new(options.build_id_cache_options, options.same_file_cache_options).unwrap();
+        let pid_cache = GCache::<PidKey, ProcTable>::new(options.pid_cache_options).unwrap();
 
         Ok(Self {
             pid_cache,
@@ -57,7 +58,7 @@ impl SymbolCache {
     }
 
     pub fn get_proc_table(&mut self, pid: PidKey) -> ProcTable {
-        if let Some(cached) = self.pid_cache.get(pid) {
+        if let Some(cached) = self.pid_cache.get(&pid) {
             return cached.clone();
         }
 
@@ -115,7 +116,7 @@ impl SymbolCache {
         self.elf_cache.debug_info()
     }
 
-    pub fn remove_dead_pid(&mut self, pid: PidKey) {
+    pub fn remove_dead_pid(&mut self, pid: &PidKey) {
         self.pid_cache.remove(pid);
     }
 }

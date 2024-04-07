@@ -13,7 +13,8 @@ use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
 use common::ebpf::symtab::elf_module::SymbolOptions;
 use common::ebpf::symtab::gcache::GCacheOptions;
 use common::ebpf::symtab::symbols::CacheOptions;
-use common::error::Error::{NotFound, OSError};
+use common::error::Error::OSError;
+
 use common::error::Result;
 
 use crate::appender::{Appendable, Fanout, RawSample};
@@ -43,7 +44,6 @@ pub struct Arguments {
 pub struct EbpfLinuxComponent<'a> {
     options: Options,
     args: Arguments,
-    target_finder: TargetFinder,
     session: Session<'a>,
 
     appendable: Fanout,
@@ -70,7 +70,7 @@ impl Component for EbpfLinuxComponent {
                 }
                 _ = self.session.changed() => {
                     let debug_info = DebugInfo {
-                        targets: self.target_finder.debug_info(),
+                        targets: self.session.target_finder.debug_info(),
                         session: self.session.debug_info(),
                     };
                     self.debug_info = debug_info;
@@ -88,17 +88,16 @@ impl Component for EbpfLinuxComponent {
 
 impl EbpfLinuxComponent {
     pub async fn new(opts: Options, args: Arguments) -> Result<Self> {
-        let target_finder = TargetFinder::new(
+        let target_finder = Arc::new(TargetFinder::new(
             1024,
             File::open("/").unwrap()
-        );
+        ));
         let ms = metrics::new(opts.registerer.borrow());
-        let session = Session::new(&target_finder, convert_session_options(&args)).unwrap();
+        let session = Session::new(target_finder, convert_session_options(&args)).unwrap();
 
         Ok(Self {
             options: opts.clone(),
             args,
-            target_finder,
             session,
             appendable: Fanout::new(args.forward_to, opts.id, opts.registerer),
             debug_info: DebugInfo { targets: vec![], session: Default::default() },
@@ -110,7 +109,7 @@ impl EbpfLinuxComponent {
         let mut builders = pprof::ProfileBuilders::new(
             BuildersOptions { sample_rate: 1000, per_pid_profile: false }
         );
-        pprof::collect(&mut builders, &self.session).await?;
+        pprof::collect(&mut builders, &self.session).await.unwrap();
 
         for (_, builder) in builders.builders {
             let service_name = builder.labels.get(LABEL_SERVICE_NAME).unwrap().trim();
@@ -121,7 +120,7 @@ impl EbpfLinuxComponent {
                 .inc_by(builder.profile.sample.len() as f64);
 
             let mut buf = vec![];
-            builder.write(&mut buf)?;
+            builder.write(&mut buf).unwrap();
 
             let raw_profile = buf.into();
             let samples = vec![RawSample { raw_profile }];
@@ -143,7 +142,7 @@ impl EbpfLinuxComponent {
 
     fn update_debug_info(&mut self) {
         let debug_info = DebugInfo {
-            targets: self.target_finder.debug_info(),
+            targets: self.session.target_finder.debug_info(),
             session: self.session.debug_info(),
         };
         self.debug_info = debug_info;

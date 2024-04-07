@@ -1,6 +1,5 @@
 use prometheus::Registry;
 
-use crate::ebpf::metrics::python::PythonMetrics;
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 
 #[derive(Clone)]
@@ -11,9 +10,6 @@ pub struct Metrics {
 impl Metrics {
     pub fn new(reg: &Registry) -> Self {
         let symtab = SymtabMetrics::new(reg);
-        reg.register(Box::new(symtab.clone()))
-            .expect("Failed to register SymtabMetrics");
-
         Metrics { symtab }
     }
 }

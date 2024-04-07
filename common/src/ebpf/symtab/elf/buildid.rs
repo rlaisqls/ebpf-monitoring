@@ -4,18 +4,18 @@ use crate::error::Result;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct BuildID {
-    id: String,
+    pub(crate) id: String,
     typ: String,
 }
 
 impl BuildID {
-    fn new(id: String, typ: String) -> Self {
+    pub fn new(id: String, typ: String) -> Self {
         BuildID { id, typ }
     }
-    fn empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.id.is_empty() || self.typ.is_empty()
     }
-    fn is_gnu(&self) -> bool {
+    pub fn is_gnu(&self) -> bool {
         self.typ == "gnu"
     }
 }
@@ -26,11 +26,11 @@ pub trait BuildIdentified {
     fn gnu_build_id(&mut self) -> Result<BuildID>;
 }
 
-impl BuildIdentified for MappedElfFile {
+impl BuildIdentified for MappedElfFile<'_> {
     fn build_id(&mut self) -> Result<BuildID> {
         let id_result = self.gnu_build_id();
         if let Ok(id) = id_result {
-            if !id.empty() {
+            if !id.is_empty() {
                 return Ok(id);
             }
         } else if !id_result.is_err() {
@@ -39,7 +39,7 @@ impl BuildIdentified for MappedElfFile {
 
         let id_result = self.go_build_id();
         if let Ok(id) = id_result {
-            if !id.empty() {
+            if !id.is_empty() {
                 return Ok(id);
             }
         } else if !id_result.is_err() {
@@ -55,7 +55,7 @@ impl BuildIdentified for MappedElfFile {
             return Err(NotFound("".to_string()));
         }
         let build_id_section = build_id_section.unwrap();
-        let data_result = self.section_data(build_id_section)?;
+        let data_result = self.section_data(build_id_section).unwrap();
         let data = data_result.as_slice();
         if data.len() < 17 {
             return Err(InvalidData(".note.gnu.build-id is too small".to_string()));
@@ -80,7 +80,7 @@ impl BuildIdentified for MappedElfFile {
             return Err(NotFound("".to_string()));
         }
         let build_id_section = build_id_section.unwrap();
-        let data_result = self.section_data(build_id_section)?;
+        let data_result = self.section_data(build_id_section).unwrap();
         let data = data_result.as_slice();
         if data.len() < 16 {
             return Err(InvalidData(".note.gnu.build-id is too small".to_string()));

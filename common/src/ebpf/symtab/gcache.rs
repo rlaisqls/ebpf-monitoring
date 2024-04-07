@@ -5,6 +5,8 @@ use lru::LruCache;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
+use std::ops::Deref;
+use crate::ebpf::symtab::symbols::PidKey;
 
 pub trait Resource {
     fn refresh(&mut self);
@@ -12,14 +14,14 @@ pub trait Resource {
 }
 
 #[derive(Eq, PartialEq)]
-pub struct GCache<K: Eq + Clone, V: Resource> {
+pub struct GCache<K: Eq + Hash, V: Resource> {
     options: GCacheOptions,
     round_cache: HashMap<K, Entry<V>>,
     lru_cache: LruCache<K, Entry<V>>,
     round: i32,
 }
 
-impl<K: Eq + Clone, V: Resource> GCache<K, V> {
+impl<K: Eq, V: Resource> GCache<K, V> {
     pub fn new(options: GCacheOptions) -> Self {
         let lru_cache_size = NonZeroUsize::try_from(options.size).unwrap();
         let lru_cache = LruCache::<K, Entry<V>>::new(lru_cache_size);
@@ -50,7 +52,7 @@ impl<K: Eq + Clone, V: Resource> GCache<K, V> {
         }
     }
 
-    pub fn cache(&mut self, k: K, v: V) {
+    pub fn cache(&mut self, k: K, v: &V) {
         let mut entry = Entry { v, round: self.round };
         entry.v.refresh();
         self.lru_cache.put(k.clone(), entry.clone());
@@ -66,16 +68,15 @@ impl<K: Eq + Clone, V: Resource> GCache<K, V> {
     pub fn cleanup(&mut self) {
         let keys: Vec<K> = self.lru_cache.keys().cloned().collect();
         for key in keys {
-            if let Some(entry) = self.lru_cache.get_mut(&key) {
+            if let Some(mut entry) = self.lru_cache.get_mut(key) {
                 entry.v.cleanup();
             }
         }
 
         let next_round_cache = self.round_cache.iter_mut()
             .map(|(k, entry)| {
-                let mut entry = entry.clone(); // Clone the entry
-                entry.v.cleanup(); // Mutate the cloned entry
-                (*k.clone(), entry) // Return the key-value pair for insertion into next_round_cache
+                entry.v.cleanup();
+                (k.clone(), entry)
             })
             .filter(|(_, entry)| entry.round >= self.round - self.options.keep_rounds)
             .collect::<HashMap<_, _>>();
@@ -95,18 +96,13 @@ impl<K: Eq + Clone, V: Resource> GCache<K, V> {
         self.round_cache.remove(k);
     }
 
-    pub fn each(&self, f: impl Fn(K, V, i32)) {
-        self.each_lru(&f);
-        self.each_round(&f);
-    }
-
-    pub fn each_lru(&self, f: &impl Fn(K, V, i32)) {
+    pub fn each_lru(&self, f: fn(K, V, i32)) {
         for (k, entry) in self.lru_cache.iter() {
             f(k.clone(), entry.v.clone(), entry.round);
         }
     }
 
-    pub fn each_round(&self, f: &impl Fn(K, V, i32)) {
+    pub fn each_round(&self, f: fn(K, V, i32)) {
         for (k, entry) in &self.round_cache {
             f(k.clone(), entry.v.clone(), entry.round);
         }
@@ -131,20 +127,6 @@ impl Default for GCacheOptions {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SymbolNameResolver;
-
-impl Resource for SymbolNameResolver {
-    fn refresh(&mut self) {
-        // Refresh logic here
-    }
-
-    fn cleanup(&mut self) {
-        // Cleanup logic here
-    }
-}
-
-
 pub struct GCacheDebugInfo<T> {
     lru_size: usize,
     round_size: usize,
@@ -163,4 +145,26 @@ impl<T: Debug> Default for GCacheDebugInfo<T> {
     fn default() -> Self {
         Self { lru_size: 0, round_size: 0, current_round: 0, lru_dump: vec![], round_dump: vec![] }
     }
+}
+
+pub fn debug_info<K, V, D>(g: &GCache<K, V>, ff: fn(K, V, i32) -> D) -> GCacheDebugInfo<D>
+    where
+        K: Eq,
+        V: Resource,
+{
+    let mut res = GCacheDebugInfo::<D> {
+        lru_size: g.lru_size(),
+        round_size: g.round_size(),
+        current_round: g.round,
+        lru_dump: Vec::with_capacity(g.lru_size()),
+        round_dump: Vec::with_capacity(g.round_size()),
+    };
+    g.each_lru(|k: K, v: V, round: i32| {
+        res.lru_dump.push(ff(k, v, round));
+    });
+    g.each_round(|k: K, v: V, round: i32| {
+        res.round_dump.push(ff(k, v, round));
+    });
+
+    res
 }

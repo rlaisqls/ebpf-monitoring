@@ -7,7 +7,6 @@ pub struct Symbol {
     pub(crate) module: String
 }
 
-#[derive(Debug)]
 pub struct SymbolTab {
     pub(crate) symbols: Vec<Symbol>,
     base: u64,
@@ -37,7 +36,7 @@ impl SymbolTable for SymbolTab {
     fn refresh(&mut self) {}
     fn cleanup(&mut self) {}
 
-    fn resolve(&self, addr: u64) -> Option<&Symbol> {
+    fn resolve(&mut self, addr: u64) -> Option<&Symbol> {
         if self.symbols.is_empty() {
             return None;
         }

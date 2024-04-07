@@ -1,22 +1,23 @@
 use std::collections::HashMap;
 use std::fs;
-use std::fs::File;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
 use crate::ebpf::symtab::elf_module::{ElfTable, ElfTableOptions};
-use crate::ebpf::symtab::procmap::ProcMap;
+use crate::ebpf::symtab::procmap::{File, ProcMap};
 use crate::ebpf::symtab::symtab::SymbolTable;
 use crate::ebpf::symtab::table::Symbol;
 use crate::ebpf::symtab::gcache::Resource;
+use crate::error::Error::{ProcError};
+use crate::error::Result;
 
-pub struct ProcTable {
-    ranges: Vec<Arc<ElfRange>>,
-    file_to_table: HashMap<File, ElfTable>,
-    options: ProcTableOptions,
+pub struct ProcTable<'a> {
+    ranges: Vec<Arc<ElfRange<'a>>>,
+    file_to_table: HashMap<File, ElfTable<'a>>,
+    options: ProcTableOptions<'a>,
     root_fs: PathBuf,
-    err: Option<anyhow::Error>
+    err: Option<crate::error::Error>
 }
 
 pub struct ProcTableDebugInfo {
@@ -26,18 +27,18 @@ pub struct ProcTableDebugInfo {
     last_used_round: i32,
 }
 
-pub struct ProcTableOptions {
+pub struct ProcTableOptions<'a> {
     pub(crate) pid: i32,
-    pub(crate) elf_table_options: ElfTableOptions
+    pub(crate) elf_table_options: ElfTableOptions<'a>
 }
 
-#[derive(Eq, Ord)]
-pub struct ElfRange {
+#[derive(Eq, PartialEq, Ord, PartialOrd)]
+pub struct ElfRange<'a> {
     map_range: ProcMap,
-    elf_table: Option<ElfTable>,
+    elf_table: Option<ElfTable<'a>>,
 }
 
-impl Resource for ProcTable {
+impl Resource for ProcTable<'_> {
     fn refresh(&mut self) {
         self.refresh()
     }
@@ -47,7 +48,7 @@ impl Resource for ProcTable {
     }
 }
 
-impl SymbolTable for ProcTable {
+impl SymbolTable for ProcTable<'_> {
     fn refresh(&mut self) {
         self.refresh()
     }
@@ -56,39 +57,39 @@ impl SymbolTable for ProcTable {
         self.cleanup()
     }
 
-    fn resolve(&mut self, pc: u64) -> Symbol {
+    fn resolve(&mut self, pc: u64) -> Option<&Symbol> {
         if pc == 0xcccccccccccccccc || pc == 0x9090909090909090 {
-            return Symbol {
+            return Some(&Symbol {
                 start: 0,
                 name: "end_of_stack".to_string(),
                 module: "[unknown]".to_string(),
-            };
+            });
         }
 
         let (i, found) = binary_search_func(&self.ranges, pc, binary_search_elf_range);
-        if !found {
-            return Symbol::default();
-        }
+        if !found { return None; }
 
         let r = &self.ranges.get_mut(i).unwrap();
         if let Some(mut t) = &r.elf_table {
-            let s = t.resolve(pc); // Cannot borrow immutable local variable `t` as mutable
             let module_offset = pc - t.base;
-            return if s.is_empty() {
-                Symbol {
-                    start: module_offset,
-                    module: r.map_range.pathname.clone(),
-                    ..Default::default()
+            return match t.resolve(pc) {
+                Some(s) => {
+                    Some(&Symbol {
+                        start: module_offset,
+                        name: s,
+                        module: r.map_range.pathname.clone(),
+                    })
                 }
-            } else {
-                Symbol {
-                    start: module_offset,
-                    name: s,
-                    module: r.map_range.pathname.clone(),
+                None => {
+                    Some(&Symbol {
+                        start: module_offset,
+                        module: r.map_range.pathname.clone(),
+                        ..Default::default()
+                    })
                 }
             }
         }
-        Symbol::default()
+        None
     }
 }
 
@@ -124,7 +125,7 @@ fn binary_search_elf_range(e: &ElfRange, pc: u64) -> i32 {
     0
 }
 
-impl ProcTable {
+impl<'a> ProcTable<'a> {
     pub(crate) fn new(options: ProcTableOptions) -> Self {
         Self {
             ranges: Vec::new(),
@@ -158,7 +159,7 @@ impl ProcTable {
             .collect();
     }
 
-    fn refresh_proc_map(&mut self, proc_maps: String) -> Result<(), String> {
+    fn refresh_proc_map(&mut self, proc_maps: String) -> Result<()> {
         // todo support perf map files
         for range in &mut self.ranges {
             range.elf_table = None;
@@ -187,38 +188,36 @@ impl ProcTable {
             .file_to_table
             .keys()
             .filter(|f| !files_to_keep.contains_key(*f))
-            .cloned()
             .collect();
 
         for file in files_to_delete {
-            self.file_to_table.remove(&file);
+            self.file_to_table.remove(file);
         }
-
         Ok(())
     }
 }
 
-fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool) -> Result<Vec<ProcMap>, String> {
+fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool) -> Result<Vec<ProcMap>> {
     let mut modules = Vec::new();
     let mut remaining = proc_maps;
     while !remaining.is_empty() {
-        let nl = remaining.iter().position(|&x| x == b'\n').unwrap_or(remaining.len());
+        let nl = remaining.chars().position(|x| x == b'\n').unwrap_or(remaining.len());
         let (line, rest) = remaining.split_at(nl);
         remaining = if rest.is_empty() { rest } else { &rest[1..] };
         if line.is_empty() {
             continue;
         }
-        if let Some(module) = parse_proc_map_line(line, executable_only)? {
+        if let Some(module) = parse_proc_map_line(line, executable_only).unwrap() {
             modules.push(module);
         }
     }
     Ok(modules)
 }
 
-fn parse_proc_map_line(line: &str, executable_only: bool) -> Result<Option<ProcMap>, String> {
+fn parse_proc_map_line(line: &str, executable_only: bool) -> Result<Option<ProcMap>> {
     let line_str = match std::str::from_utf8(line.as_ref()) {
         Ok(s) => s,
-        Err(_) => return Err("Error converting byte slice to string".to_string()),
+        Err(_) => return Err(ProcError("Error converting byte slice to string".to_string())),
     };
     let fields: Vec<&str> = line_str.split_whitespace().collect();
     if fields.len() < 5 {
@@ -230,10 +229,10 @@ fn parse_proc_map_line(line: &str, executable_only: bool) -> Result<Option<ProcM
     }
     let addr_parts: Vec<&str> = fields[0].split('-').collect();
     if addr_parts.len() != 2 {
-        return Err("Invalid address range format".to_string());
+        return Err(ProcError("Invalid address range format".to_string()));
     }
-    let start = u64::from_str_radix(addr_parts[0], 16).map_err(|_| "Invalid start address".to_string())?;
-    let end = u64::from_str_radix(addr_parts[1], 16).map_err(|_| "Invalid end address".to_string())?;
+    let start = u64::from_str_radix(addr_parts[0], 16).map_err(|_| "Invalid start address".to_string()).unwrap();
+    let end = u64::from_str_radix(addr_parts[1], 16).map_err(|_| "Invalid end address".to_string()).unwrap();
     Ok(Some(
         ProcMap {
             start_addr: start,

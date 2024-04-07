@@ -2,20 +2,22 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use crate::ebpf::symtab::table::{Symbol, SymbolTab};
+use crate::error::Error::SymbolError;
+use crate::error::Result;
 
 const KALLSYMS_MODULE: &str = "kernel";
 
-pub fn new_kallsyms() -> io::Result<SymbolTab> {
+pub fn new_kallsyms() -> Result<SymbolTab> {
     new_kallsyms_from_file("/proc/kallsyms")
 }
 
-fn new_kallsyms_from_file<P: AsRef<Path>>(path: P) -> io::Result<SymbolTab> {
-    let file = File::open(path)?;
+fn new_kallsyms_from_file<P: AsRef<Path>>(path: P) -> Result<SymbolTab> {
+    let file = File::open(path).unwrap();
     let reader = BufReader::new(file);
     new_kallsyms_from_data(reader)
 }
 
-fn new_kallsyms_from_data<B: BufRead>(buf: B) -> io::Result<SymbolTab> {
+fn new_kallsyms_from_data<B: BufRead>(buf: B) -> Result<SymbolTab> {
     let mut syms = Vec::new();
     let mut all_zeros = true;
 
@@ -26,14 +28,14 @@ fn new_kallsyms_from_data<B: BufRead>(buf: B) -> io::Result<SymbolTab> {
     };
 
     for line in buf.lines() {
-        let line = line?;
+        let line = line.unwrap();
         if line.is_empty() {
             continue;
         }
 
         let mut parts = line.split_whitespace();
-        let addr_part = parts.next().ok_or(io::Error::new(io::ErrorKind::Other, "no space found"))?;
-        let typ = parts.next().ok_or(io::Error::new(io::ErrorKind::Other, "no space found"))?;
+        let addr_part = parts.next().ok_or(SymbolError("no space found".to_string())).unwrap();
+        let typ = parts.next().ok_or(SymbolError("no space found".to_string())).unwrap();
         let name_part = parts.next().unwrap_or(KALLSYMS_MODULE); // Assuming module name is always present after name
 
         if typ.starts_with('b') || typ.starts_with('B') || typ.starts_with('d') ||
@@ -41,7 +43,7 @@ fn new_kallsyms_from_data<B: BufRead>(buf: B) -> io::Result<SymbolTab> {
             continue;
         }
 
-        let istart = u64::from_str_radix(addr_part, 16).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let istart = u64::from_str_radix(addr_part, 16).map_err(|e| SymbolError(e.to_string())).unwrap();
 
         if istart < kernel_addr_space {
             continue;

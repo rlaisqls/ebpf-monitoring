@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex};
 use lru::LruCache;
 use log::{debug, warn};
 
@@ -111,7 +111,6 @@ pub struct TargetsOptions {
     pub container_cache_size: usize,
 }
 
-#[derive(Clone)]
 pub struct TargetFinder {
     cid2target: HashMap<String, Target>,
     pid2target: HashMap<u32, Target>,
@@ -136,15 +135,13 @@ impl TargetFinder {
     }
 
     pub(crate) fn find_target(&self, pid: u32) -> Option<Target> {
-        if let Some(&target) = self.pid2target.get(&pid) {
-            return Some(*target.clone());
+        if let Some(target) = self.pid2target.get(&pid) {
+            return Some(target.clone());
         }
-
         let cid = {
             let mut cache = self.container_id_cache.lock().unwrap();
             cache.get(&pid).cloned()
         };
-
         match cid {
             Some(cid) => self.cid2target.get(&cid).cloned(),
             None => self.default_target.clone(),
@@ -172,7 +169,7 @@ impl TargetFinder {
                 let t = Target::new("".to_string(), pid, target.clone());
                 pid2_target.insert(pid, t);
             } else if let Some(cid) = container_id_from_target(target) {
-                let t = Target::new(cid.clone(), 0, target.clone());
+                let t = Target::new(cid, 0, target.clone());
                 container_id2_target.insert(cid.clone(), t);
             }
         }
@@ -195,7 +192,7 @@ impl TargetFinder {
     }
 
     fn resize_container_id_cache(&mut self, size: usize) {
-        self.container_id_cache.resize(size);
+        self.container_id_cache.lock().unwrap().resize(NonZeroUsize::try_from(size).unwrap());
     }
 
     pub fn debug_info(&mut self) -> Vec<String> {
@@ -214,11 +211,11 @@ impl TargetFinder {
 }
 
 
-fn pid_from_target(target: &DiscoveryTarget) -> u32 {
+fn pid_from_target(target: &DiscoveryTarget) -> Option<u32> {
     if let Some(t) = target.get(LABEL_PID) {
         if let Ok(pid) = u32::from_str(t) {
-            return pid;
+            return Some(pid);
         }
     }
-    0
+    None
 }

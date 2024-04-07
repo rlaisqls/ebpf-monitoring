@@ -1,6 +1,7 @@
+use std::fmt::Display;
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Error {
     #[error("data not found: {0}")]
     NotFound(String),
@@ -21,7 +22,11 @@ pub enum Error {
     #[error("Symbol Error: {0}")]
     SymbolError(String),
     #[error("ELF Error: {0}")]
-    ELFError(String)
+    ELFError(String),
+    #[error("Proc Error: {0}")]
+    ProcError(String),
+    #[error("Session Error: {0}")]
+    SessionError(String)
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

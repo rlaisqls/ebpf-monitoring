@@ -1,20 +1,19 @@
-mod profiles;
-mod pprof;
-
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use crate::ebpf::pprof::profiles::{Function, Label, Line, Location, Profile, Sample, ValueType};
 
 use crate::common::labels::Labels;
 use crate::ebpf::pprof::pprof::PProfBuilder;
+use crate::ebpf::pprof::profiles::{Function, Line, Location, Profile, Sample, ValueType};
 use crate::ebpf::sd::target::Target;
-use crate::error::Error::{InvalidData};
 use crate::error::Result;
+
+mod profiles;
+mod pprof;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SampleType {
@@ -259,8 +258,8 @@ impl ProfileBuilder {
         let mut gzip_writer = GzEncoder::new(
             &mut dst.borrow(), Compression::default()
         );
-        self.profile.write_uncompressed(&mut gzip_writer)?;
-        gzip_writer.finish()?;
+        self.profile.write_uncompressed(&mut gzip_writer).unwrap();
+        gzip_writer.finish().unwrap();
         Ok(0)
     }
 }

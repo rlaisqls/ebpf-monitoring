@@ -49,7 +49,7 @@ impl Index {
     }
 
     fn get_type_by_name(&self, name: &str) -> Option<&Typ> {
-        let typedef = self.typedefs.get(name)?;
+        let typedef = self.typedefs.get(name).unwrap();
         let mut types = Vec::new();
         for &offset in &typedef.type_offsets {
             if let Some(typ) = self.offset_to_type.get(&offset) {
@@ -64,18 +64,18 @@ fn struct_member_offsets_from_dwarf(data: &Dwarf<&str>) -> Result<Index> {
     let mut res = Index::new();
 
     for unit in data.units() {
-        let abbrevs = unit.abbreviations()?;
+        let abbrevs = unit.abbreviations().unwrap();
         let mut entries = unit.entries();
 
-        while let Some(entry) = entries.next()? {
-            let attrs = entry.attrs(&abbrevs)?;
+        while let Some(entry) = entries.next().unwrap() {
+            let attrs = entry.attrs(&abbrevs).unwrap();
 
             match entry.tag() {
                 gimli::DW_TAG_structure_type | gimli::DW_TAG_typedef => {
                     let name = match attrs.get(DW_AT_name) {
                         Some(AttributeValue::DebugStrRef(name_offset)) => {
-                            let debug_str = data.debug_str()?;
-                            debug_str.get_str(*name_offset)?.to_string()
+                            let debug_str = data.debug_str().unwrap();
+                            debug_str.get_str(*name_offset).unwrap().to_string()
                         }
                         _ => continue,
                     };
@@ -91,7 +91,7 @@ fn struct_member_offsets_from_dwarf(data: &Dwarf<&str>) -> Result<Index> {
                     let mut fields = Vec::new();
                     for attr in attrs {
                         if let (DW_AT_name, Some(AttributeValue::DebugStrRef(name_offset))) = attr {
-                            let name = data.debug_str()?.get_str(*name_offset)?.to_string();
+                            let name = data.debug_str().unwrap().get_str(*name_offset).unwrap().to_string();
 
                             if let (DW_AT_data_member_location, Some(AttributeValue::Exprloc(data))) = attr {
                                 let offset = parse_expr(data)?;

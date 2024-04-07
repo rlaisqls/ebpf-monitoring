@@ -40,19 +40,19 @@ impl Poller {
         Ok(())
     }
 
-    fn wait(&self, deadline: Option<Instant>) -> nix::Result<Vec<EpollEvent>> {
+    fn wait(&self, deadline: Option<Instant>) -> Result<Vec<EpollEvent>> {
         let mut events = vec![EpollEvent::empty(); 10]; // Adjust size as needed
 
         let timeout = deadline.map_or(-1, |d| {
             d.saturating_duration_since(Instant::now()).as_millis() as c_int
         });
 
-        let n_events = epoll_wait(self.epoll_fd, &mut events, timeout as isize)?;
+        let n_events = epoll_wait(self.epoll_fd, &mut events, timeout as isize).unwrap();
         Ok(events.into_iter().take(n_events).collect())
     }
 
     fn close(&mut self) -> nix::Result<()> {
-        close(self.epoll_fd)?;
+        close(self.epoll_fd).unwrap();
         self.epoll_fd = -1;
         Ok(())
     }

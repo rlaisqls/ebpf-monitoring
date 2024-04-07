@@ -159,7 +159,7 @@ impl FanOutClient {
         let _ = tokio::spawn(async move {
             let _ = tx.send(());
         });
-        let _ = future::try_join_all(tasks).await?;
+        let _ = future::try_join_all(tasks).await.unwrap();
         if !errors.is_empty() {
             return Err(anyhow::anyhow!("errors occurred during pushing: {:?}", errors).into());
         }
