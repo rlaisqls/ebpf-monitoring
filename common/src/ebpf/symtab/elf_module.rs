@@ -39,7 +39,7 @@ impl Default for SymbolOptions {
 #[derive(Eq, PartialEq, PartialOrd, Ord)]
 pub struct ElfTable<'a> {
     fs: String,
-    table: Box<dyn SymbolNameResolver>,
+    pub(crate) table: Box<dyn SymbolNameResolver>,
     pub(crate) base: u64,
     loaded: bool,
     loaded_cached: bool,

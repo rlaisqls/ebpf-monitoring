@@ -26,7 +26,7 @@ impl Poller {
             epoll_fd,
             event: event_arc.clone(),
         };
-        poller.add(event_arc.unwrap().raw_fd(), 0).unwrap();
+        poller.add(event_arc.as_raw_fd(), 0).unwrap();
         Ok(poller)
     }
 

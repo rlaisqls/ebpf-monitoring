@@ -148,10 +148,10 @@ impl TargetFinder {
         }
     }
 
-    pub(crate) fn remove_dead_pid(&mut self, pid: u32) {
-        self.pid2target.remove(&pid);
+    pub(crate) fn remove_dead_pid(&mut self, pid: &u32) {
+        self.pid2target.remove(pid);
         let mut cache = self.container_id_cache.lock().unwrap();
-        cache.pop(&pid);
+        cache.pop(pid);
     }
 
     pub(crate) fn update(&mut self, args: TargetsOptions) {

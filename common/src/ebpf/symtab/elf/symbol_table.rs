@@ -109,9 +109,9 @@ impl SymbolNameTable<'_> {
 
 pub struct SymTabDebugInfo {
     name: String,
-    size: usize,
+    pub(crate) size: usize,
     file: String,
-    pub(crate) last_used_round: usize,
+    pub(crate) last_used_round: i32,
 }
 
 impl Default for SymTabDebugInfo {

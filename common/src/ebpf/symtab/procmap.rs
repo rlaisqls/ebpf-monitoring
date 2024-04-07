@@ -27,11 +27,11 @@ pub struct ProcMap {
 }
 
 
-#[derive(PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(PartialEq, PartialOrd, Eq, Ord, Hash, Clone)]
 pub struct File {
-    dev:   u64,
-    inode: u64,
-    path:  String
+    pub(crate) dev:   u64,
+    pub(crate) inode: u64,
+    pub(crate) path:  String
 }
 
 impl ProcMap {

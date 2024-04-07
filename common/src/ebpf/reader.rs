@@ -130,7 +130,7 @@ impl Reader {
     }
 
     pub(crate) fn close(&mut self) -> Result<()> {
-        self.poller.close();
+        // self.poller.close();
         for ring in self.rings.iter_mut() {
             ring.close();
         }
@@ -151,8 +151,6 @@ impl Reader {
 
         loop {
             if self.epoll_rings.is_empty() {
-
-                let n_events = self.poller.wait(&mut self.epoll_events, self.deadline);
                 let _ = self.pause_mu.lock().unwrap();
 
                 // Re-validate pr.paused since we dropped pauseMu.
@@ -160,7 +158,7 @@ impl Reader {
                     return Err(MustBePaused);
                 }
 
-                for event in self.epoll_events[..n_events].iter() {
+                for event in self.epoll_events.iter() {
                     let ring = &self.rings[event.cpu_for_event()];
                     self.epoll_rings.push(ring.clone());
 

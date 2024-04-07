@@ -138,7 +138,7 @@ impl Session<'_> {
 
     fn start(&mut self) -> Result<()> {
 
-        let _guard = self.mutex.lock()?;
+        let _guard = self.mutex.lock().unwrap();
         bump_memlock_rlimit().expect(&*"Failed to increase rlimit");
 
         self.bpf.attach().unwrap();
@@ -220,6 +220,20 @@ impl Session<'_> {
         //     self.try_start_python_profiling(pid, target, typ)
         // }
         self.set_pid_config(pid, typ);
+    }
+
+    fn set_pid_config(&mut self, pid: &u32, pi: ProcInfoLite, collect_user: bool, collect_kernel: bool) {
+        self.pids.insert(pid, pi);
+        let config = ProfilePidConfig {
+            type_: pi.type_,
+            collect_user: collect_user as u8,
+            collect_kernel: collect_kernel as u8,
+        };
+        self.bpf.maps().pids().update(pid.to_ne_bytes(), );
+
+        if let Err(err) = self.bpf.pids.update(&pid, &config, ebpf::UpdateAny) {
+            let _ = level::error(self.logger).log("msg", "updating pids map", "err", format!("{:?}", err));
+        }
     }
 
     fn select_profiling_type(&self, pid: u32, target: &Target) -> ProcInfoLite {
@@ -608,9 +622,9 @@ impl Session<'_> {
         let m = &self.options.metrics.symtab;
         let service_name = labels.service_name();
         if m != &SymtabMetrics::default() {
-            m.known_symbols.with_label_values(&[&service_name]).set(stats.known as i64);
-            m.unknown_symbols.with_label_values(&[&service_name]).set(stats.unknown_symbols as i64);
-            m.unknown_modules.with_label_values(&[&service_name]).set(stats.unknown_modules as i64);
+            m.known_symbols.with_label_values(&[&service_name]).inc_by(stats.known as f64);
+            m.unknown_symbols.with_label_values(&[&service_name]).inc_by(stats.unknown_symbols as f64);
+            m.unknown_modules.with_label_values(&[&service_name]).inc_by(stats.unknown_modules as f64);
         }
         if sb.stack.len() > 2 && stats.unknown_symbols + stats.unknown_modules > stats.known {
             m.unknown_stacks.with_label_values(&[&service_name]).inc();
@@ -631,20 +645,20 @@ impl Session<'_> {
             self.pids.unknown.remove(pid);
             self.pids.all.remove(pid);
             self.sym_cache.remove_dead_pid(pid);
-            self.bpf.maps().pids().delete(*pid.to_le_bytes()).unwrap();
-            self.target_finder.remove_dead_pid(*pid);
+            self.bpf.maps().pids().delete(&pid.to_le_bytes()).unwrap();
+            self.target_finder.remove_dead_pid(pid);
         }
 
         let mut unknown_pids_to_remove = HashSet::new();
         for pid in self.pids.unknown.keys() {
             let proc_path = format!("/proc/{}", pid);
-            if let Err(err) = std::fs::metadata(&proc_path) {
+            if let Err(err) = fs::metadata(&proc_path) {
                 if !matches!(err.kind(), std::io::ErrorKind::NotFound) {
                     error!("cleanup stat pid: {} err: {}", pid, err);
                 }
-                unknown_pids_to_remove.insert(*pid);
+                unknown_pids_to_remove.insert(pid.clone());
                 self.pids.all.remove(pid).unwrap();
-                self.bpf.maps().pids().delete(*pid.to_le_bytes()).unwrap()
+                self.bpf.maps().pids().delete(&pid.to_le_bytes()).unwrap()
             }
         }
 
@@ -659,7 +673,7 @@ impl Session<'_> {
 
     fn check_stale_pids(&self) {
         let m = &self.bpf.maps().pids();
-        let map_size = m.max_entries();
+        let map_size = m.info().unwrap().info.max_entries as usize;
         let mut nkey = 0u32;
         let mut keys = Vec::with_capacity(map_size);
         let mut values = Vec::with_capacity(map_size);

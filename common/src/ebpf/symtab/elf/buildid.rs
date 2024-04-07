@@ -2,7 +2,7 @@ use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
 use crate::error::Error::{InvalidData, NotFound};
 use crate::error::Result;
 
-#[derive(Debug, Eq, PartialEq, Hash)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub struct BuildID {
     pub(crate) id: String,
     typ: String,

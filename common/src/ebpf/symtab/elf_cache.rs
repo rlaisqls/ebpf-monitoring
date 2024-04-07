@@ -22,7 +22,7 @@ impl<'a> ElfCache<'a> {
     }
 
     pub fn get_symbols_by_build_id(&self, build_id: &BuildID) -> Option<SymbolNameTable> {
-        let res = self.build_id_cache.lock().unwrap().get(build_id).unwrap();
+        let res = self.build_id_cache.lock().unwrap().get(build_id);
         if res.is_dead() {
             self.build_id_cache.lock().unwrap().remove(build_id);
             return None;
@@ -65,14 +65,14 @@ impl<'a> ElfCache<'a> {
     pub fn debug_info(&self) -> ElfCacheDebugInfo {
         let build_id_cache = debug_info::<BuildID, dyn SymbolNameResolver, SymTabDebugInfo>(
             self.build_id_cache.lock().unwrap().deref(),
-            |b: BuildID, v: dyn SymbolNameResolver, round: i32| {
+            |b: &BuildID, v: &dyn SymbolNameResolver, round: i32| {
                 let mut res = v.debug_info();
                 res.last_used_round = round as usize;
                 res
             });
         let same_file_cache = debug_info::<Stat, dyn SymbolNameResolver, SymTabDebugInfo>(
             self.same_file_cache.lock().unwrap().deref(),
-            |s: Stat, v: dyn SymbolNameResolver, round: i32| {
+            |s: &Stat, v: &dyn SymbolNameResolver, round: i32| {
                 let mut res = v.debug_info();
                 res.last_used_round = round as usize;
                 res

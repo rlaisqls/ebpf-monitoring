@@ -120,7 +120,7 @@ impl EbpfLinuxComponent {
                 .inc_by(builder.profile.sample.len() as f64);
 
             let mut buf = vec![];
-            builder.write(&mut buf).unwrap();
+            builder.write(&mut buf);
 
             let raw_profile = buf.into();
             let samples = vec![RawSample { raw_profile }];

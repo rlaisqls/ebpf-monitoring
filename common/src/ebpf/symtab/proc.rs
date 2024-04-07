@@ -25,7 +25,7 @@ pub struct ProcTableDebugInfo {
     elf_tables: HashMap<String, SymTabDebugInfo>,
     size: usize,
     pid: i32,
-    last_used_round: i32,
+    pub(crate) last_used_round: i32,
 }
 
 #[derive(Eq, PartialEq, Ord, PartialOrd)]
@@ -150,9 +150,9 @@ impl<'a> ProcTable<'a> {
     }
 
     fn cleanup(&mut self) {
-        self.file_to_table
+        let _ = self.file_to_table
             .iter_mut()
-            .map(|_, table| table.cleanup() )
+            .map(|(_, table)| table.cleanup())
             .collect();
     }
 
@@ -189,6 +189,22 @@ impl<'a> ProcTable<'a> {
             self.file_to_table.remove(&file);
         }
         Ok(())
+    }
+
+    pub(crate) fn debug_info(&self) -> ProcTableDebugInfo {
+        let mut res = ProcTableDebugInfo {
+            pid: self.pid,
+            size: self.file_to_table.len(),
+            elf_tables: HashMap::new(),
+            last_used_round: 0,
+        };
+        for (file, elf) in &self.file_to_table {
+            let d = elf.table.debug_info();
+            if d.size != 0 {
+                res.elf_tables.insert(format!("{} {} {}", file.dev, file.inode, file.path), d);
+            }
+        }
+        res
     }
 
     fn get_elf_table(&mut self, r: ProcMap) -> Option<&mut ElfTable> {

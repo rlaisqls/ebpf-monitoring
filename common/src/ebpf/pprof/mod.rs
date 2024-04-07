@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use prost::Message;
 
 use crate::common::labels::Labels;
 use crate::ebpf::pprof::pprof::PProfBuilder;
@@ -274,12 +275,13 @@ impl ProfileBuilder {
         func
     }
 
-    pub fn write(&self, dst: &mut dyn Write) -> Result<()> {
+    pub fn write(&self, dst: &mut dyn Write) {
         let mut gzip_writer = GzEncoder::new(
             dst, Compression::default()
         );
-        self.profile.write_uncompressed(&mut gzip_writer).unwrap();
+        let mut content = Vec::new();
+        self.profile.encode(&mut content).unwrap();
+        gzip_writer.write(content.as_slice()).unwrap();
         gzip_writer.finish().unwrap();
-        Ok(0)
     }
 }

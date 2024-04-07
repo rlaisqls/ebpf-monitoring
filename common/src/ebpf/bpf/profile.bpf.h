@@ -1,9 +1,6 @@
 #ifndef PROFILE_BPF_H
 #define PROFILE_BPF_H
 
-
-
-
 struct sample_key {
     __u32 pid;
     __u32 flags;
@@ -23,6 +20,7 @@ struct pid_config {
     uint8_t collect_kernel;
     uint8_t padding_;
 };
+struct pid_config p__;
 
 #define OP_REQUEST_UNKNOWN_PROCESS_INFO 1
 #define OP_PID_DEAD 2
