@@ -8,7 +8,7 @@ use crate::ebpf::symtab::gcache::{debug_info, GCache, GCacheDebugInfo, GCacheOpt
 use crate::ebpf::symtab::stat::Stat;
 use crate::ebpf::symtab::symtab::SymbolNameResolver;
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Clone)]
 pub struct ElfCache<'a> {
     build_id_cache: Mutex<GCache<BuildID, SymbolNameTable<'a>>>,
     same_file_cache: Mutex<GCache<Stat, SymbolNameTable<'a>>>,

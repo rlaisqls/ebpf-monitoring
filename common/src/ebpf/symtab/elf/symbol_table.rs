@@ -41,7 +41,7 @@ pub struct FlatSymbolIndex {
     pub(crate) values: PCIndex
 }
 
-#[derive(Debug, Ord, PartialOrd)]
+#[derive(Debug, Eq, Ord, PartialOrd, PartialEq)]
 pub struct SymbolNameTable<'a> {
     pub(crate) index: FlatSymbolIndex,
     pub(crate) file: MappedElfFile<'a>

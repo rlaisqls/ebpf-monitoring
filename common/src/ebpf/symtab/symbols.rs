@@ -1,12 +1,13 @@
 use log::{debug, error};
-use crate::error::Result;
-use crate::ebpf::symtab::elf_cache::{ElfCache, ElfCacheDebugInfo};
-use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo, GCacheOptions};
+
 use crate::ebpf::metrics::symtab::SymtabMetrics;
+use crate::ebpf::symtab::elf_cache::{ElfCache, ElfCacheDebugInfo};
 use crate::ebpf::symtab::elf_module::{ElfTableOptions, SymbolOptions};
+use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo, GCacheOptions};
+use crate::ebpf::symtab::kallsyms::new_kallsyms;
 use crate::ebpf::symtab::proc::{ProcTable, ProcTableDebugInfo, ProcTableOptions};
 use crate::ebpf::symtab::table::SymbolTab;
-use crate::ebpf::symtab::kallsyms::new_kallsyms;
+use crate::error::Result;
 
 pub type PidKey = u32;
 
@@ -64,13 +65,11 @@ impl<'a> SymbolCache<'a> {
 
         debug!("NewProcTable {}", pid);
         let fresh = ProcTable::new(
-            ProcTableOptions {
-                pid: pid as i32,
-                elf_table_options: ElfTableOptions {
-                    elf_cache: &self.elf_cache,
-                    metrics: &self.metrics,
-                    symbol_options: &self.options.symbol_options,
-                },
+            pid as i32,
+            ElfTableOptions {
+                    elf_cache: self.elf_cache.clone(),
+                    metrics: self.metrics.clone(),
+                    symbol_options: self.options.symbol_options,
             },
         );
         self.pid_cache.cache(pid, fresh.clone());

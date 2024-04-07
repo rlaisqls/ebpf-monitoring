@@ -1,5 +1,5 @@
-use pprof::Collector;
 use prometheus::CounterVec;
+
 use crate::ebpf::metrics::registry::Registerer;
 
 #[derive(Clone)]

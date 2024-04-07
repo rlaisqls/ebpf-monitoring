@@ -18,7 +18,7 @@ use crate::ebpf::symtab::symtab::{NoopSymbolNameResolver, SymbolNameResolver};
 use crate::error::Error::{ELFError, NotFound};
 use crate::error::Result;
 
-#[derive()]
+#[derive(Clone)]
 pub struct ElfTableOptions<'a> {
     pub(crate) elf_cache: ElfCache<'a>,
     pub(crate) metrics: SymtabMetrics,
@@ -39,7 +39,6 @@ impl Default for SymbolOptions {
 #[derive(Eq, PartialEq, PartialOrd, Ord)]
 pub struct ElfTable<'a> {
     fs: String,
-    elf_file_path: String,
     table: Box<dyn SymbolNameResolver>,
     pub(crate) base: u64,
     loaded: bool,
@@ -50,10 +49,9 @@ pub struct ElfTable<'a> {
 }
 
 impl ElfTable<'_> {
-    fn new(proc_map: ProcMap, fs: String, elf_file_path: String, options: ElfTableOptions) -> Self {
+    pub fn new(proc_map: ProcMap, fs: String, options: ElfTableOptions) -> Self {
         Self {
             fs,
-            elf_file_path,
             table: Box::new(NoopSymbolNameResolver {}),
             base: 0,
             loaded: false,
@@ -67,7 +65,7 @@ impl ElfTable<'_> {
     fn load(&mut self) {
         if self.loaded { return; }
         self.loaded = true;
-        let fs_elf_file_path = PathBuf::from(&self.fs).join(&self.elf_file_path);
+        let fs_elf_file_path = PathBuf::from(&self.fs).join(&self.proc_map.pathname);
 
         let me_result = MappedElfFile::new(fs_elf_file_path);
         let mut me = match me_result {
@@ -170,7 +168,7 @@ impl ElfTable<'_> {
     fn on_load_error(&mut self, err: crate::error::Error) {
         self.err = Option::from(err);
         info!("failed to load elf table err: {}, f: {}, fs: {}",
-            &err.to_string(), &self.elf_file_path.to_string(), &self.fs.to_string());
+            &err.to_string(), &self.proc_map.pathname.to_string(), &self.fs.to_string());
         self.options.metrics.elf_errors.with_label_values(&[&err.to_string()]).inc();
     }
 
@@ -201,7 +199,7 @@ impl ElfTable<'_> {
     }
 
     fn find_debug_file_with_debug_link(&self, elf_file: &mut MappedElfFile) -> Option<String> {
-        let elf_file_path = Path::new(&self.elf_file_path);
+        let elf_file_path = Path::new(&self.proc_map.pathname);
         let debug_link_section = elf_file.section(".gnu_debuglink").unwrap();
         let data = elf_file.section_data(debug_link_section).unwrap();
 

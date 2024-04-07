@@ -27,7 +27,7 @@ pub struct ProcMap {
 }
 
 
-#[derive(PartialEq, PartialOrd, Eq, Ord)]
+#[derive(PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct File {
     dev:   u64,
     inode: u64,
@@ -35,12 +35,12 @@ pub struct File {
 }
 
 impl ProcMap {
-    pub(crate) fn file(&self) {
+    pub(crate) fn file(&self) -> File {
         File {
             dev: self.dev,
             inode: self.inode,
             path: self.pathname.clone()
-        };
+        }
     }
 }
 

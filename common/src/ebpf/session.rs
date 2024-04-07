@@ -10,7 +10,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use byteorder::ReadBytesExt;
 use gimli::{LittleEndian};
-use libbpf_rs::{Error, libbpf_sys, Link, MapFlags};
+use libbpf_rs::{Error, libbpf_sys, Link, Map, MapFlags, MapHandle};
 use libbpf_rs::libbpf_sys::{bpf_map_batch_opts, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use log::{debug, error, info};
@@ -143,7 +143,10 @@ impl Session<'_> {
         bump_memlock_rlimit().expect(&*"Failed to increase rlimit");
 
         self.bpf.attach().unwrap();
-        let events_reader = Reader::new(Arc::new(self.bpf.maps_mut().events()), 4 * page_size::get())?;
+        self.bpf.maps().events();
+        let events_reader = Reader::new(
+            MapHandle::try_clone(self.bpf.maps().events()).unwrap(), 4 * page_size::get()
+        ).unwrap();
         self.perf_events = attach_perf_events(
             self.options.sample_rate,
             &self.bpf.links.do_perf_event.take().unwrap()
@@ -442,7 +445,6 @@ impl Session<'_> {
         self.sym_cache.next_round();
         self.round_number += 1;
 
-        let cb = cb.clone();
         self.collect_regular_profile(cb)?;
         self.cleanup();
 

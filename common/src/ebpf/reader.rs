@@ -9,7 +9,7 @@ use std::slice::from_raw_parts_mut;
 
 use crate::error::Error::{OSError};
 use libbpf_rs::libbpf_sys::{PERF_COUNT_SW_BPF_OUTPUT, PERF_FLAG_FD_CLOEXEC, PERF_SAMPLE_RAW, PERF_TYPE_SOFTWARE};
-use libbpf_rs::Map;
+use libbpf_rs::{Map, MapHandle};
 use libbpf_sys::perf_event_mmap_page;
 use libc::{c_int, c_void, close, MAP_FAILED, MAP_SHARED, mmap, munmap, pid_t, PROT_READ};
 use polling::Poller;
@@ -63,7 +63,7 @@ pub struct Reader {
 
     // Closing a PERF_EVENT_ARRAY removes all event fds
     // stored in it, so we keep a reference alive.
-    array: Arc<Map>,
+    array: MapHandle,
     rings: Vec<PerfEventRing>,
     epoll_events: polling::Events,
     epoll_rings: Vec<PerfEventRing>,
@@ -79,7 +79,7 @@ pub struct Reader {
 }
 
 impl Reader {
-    pub fn new(array: Arc<Map>, per_cpu_buffer: usize) -> Result<Self> {
+    pub fn new(array: MapHandle, per_cpu_buffer: usize) -> Result<Self> {
         let n_cpu = 4 * page_size::get();
         let mut rings = Vec::with_capacity(n_cpu);
         let mut pause_fds = Vec::with_capacity(n_cpu);
@@ -105,7 +105,7 @@ impl Reader {
             poller,
             deadline: Some(Duration::from_secs(10)),
             mu: Arc::new(Mutex::new(())),
-            array,
+            array: array,
             rings,
             epoll_events: polling::Events::new(),
             epoll_rings: Vec::new(),

@@ -15,9 +15,10 @@ use crate::error::Result;
 pub struct ProcTable<'a> {
     ranges: Vec<Arc<ElfRange<'a>>>,
     file_to_table: HashMap<File, ElfTable<'a>>,
-    options: ProcTableOptions<'a>,
     root_fs: PathBuf,
-    err: Option<crate::error::Error>
+    err: Option<crate::error::Error>,
+    pid: i32,
+    elf_table_options: ElfTableOptions<'a>
 }
 
 pub struct ProcTableDebugInfo {
@@ -25,11 +26,6 @@ pub struct ProcTableDebugInfo {
     size: usize,
     pid: i32,
     last_used_round: i32,
-}
-
-pub struct ProcTableOptions<'a> {
-    pub(crate) pid: i32,
-    pub(crate) elf_table_options: ElfTableOptions<'a>
 }
 
 #[derive(Eq, PartialEq, Ord, PartialOrd)]
@@ -126,12 +122,13 @@ fn binary_search_elf_range(e: &ElfRange, pc: u64) -> i32 {
 }
 
 impl<'a> ProcTable<'a> {
-    pub(crate) fn new(options: ProcTableOptions) -> Self {
+    pub(crate) fn new(pid: i32, elf_table_options: ElfTableOptions<'a>) -> Self {
         Self {
             ranges: Vec::new(),
             file_to_table: HashMap::new(),
-            options,
-            root_fs: PathBuf::from(format!("/proc/{}/root", options.pid.to_string())),
+            pid,
+            elf_table_options,
+            root_fs: PathBuf::from(format!("/proc/{}/root", pid.to_string())),
             err: None,
         }
     }
@@ -141,7 +138,7 @@ impl<'a> ProcTable<'a> {
             return;
         }
 
-        let path = format!("/proc/{}/maps", self.options.pid.to_string());
+        let path = format!("/proc/{}/maps", self.pid.to_string());
         match fs::read_to_string(&path) {
             Ok(proc_maps) => {
                 self.err = Some(self.refresh_proc_map(proc_maps).into());
@@ -178,7 +175,7 @@ impl<'a> ProcTable<'a> {
                 elf_table: None,
             };
             self.ranges.push(range.clone());
-            if let Some(elf_table) = self.get_elf_table(&range) {
+            if let Some(elf_table) = self.get_elf_table(range) {
                 self.file_to_table.insert(range.map_range.file(), elf_table);
                 files_to_keep.insert(range.map_range.file(), ());
             }
@@ -194,6 +191,30 @@ impl<'a> ProcTable<'a> {
             self.file_to_table.remove(file);
         }
         Ok(())
+    }
+
+    fn get_elf_table(&mut self, r: ElfRange) -> Option<&mut ElfTable> {
+        let f = r.map_range.file();
+        if let Some(e) = self.file_to_table.get_mut(&f) {
+            Some(e)
+        } else {
+            let e = self.create_elf_table(r.map_range);
+            if let Some(e) = e {
+                self.file_to_table.insert(f.clone(), e);
+            }
+            self.file_to_table.get_mut(&f)
+        }
+    }
+
+    fn create_elf_table(&self, m: ProcMap) -> Option<ElfTable> {
+        if !m.pathname.starts_with('/') {
+            return None;
+        }
+        Some(ElfTable::new(
+            m,
+            self.root_fs.to_str().unwrap().to_string(),
+            self.elf_table_options.clone()
+        ))
     }
 }
 

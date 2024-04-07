@@ -13,15 +13,15 @@ pub trait Resource {
     fn cleanup(&mut self);
 }
 
-#[derive(Eq, PartialEq)]
-pub struct GCache<K: Eq + Hash, V: Resource> {
+#[derive(Eq, PartialEq, Clone)]
+pub struct GCache<K: Eq + std::hash::Hash, V: Resource> {
     options: GCacheOptions,
     round_cache: HashMap<K, Entry<V>>,
     lru_cache: LruCache<K, Entry<V>>,
     round: i32,
 }
 
-impl<K: Eq, V: Resource> GCache<K, V> {
+impl<K: Eq + std::hash::Hash, V: Resource> GCache<K, V> {
     pub fn new(options: GCacheOptions) -> Self {
         let lru_cache_size = NonZeroUsize::try_from(options.size).unwrap();
         let lru_cache = LruCache::<K, Entry<V>>::new(lru_cache_size);
@@ -149,7 +149,7 @@ impl<T: Debug> Default for GCacheDebugInfo<T> {
 
 pub fn debug_info<K, V, D>(g: &GCache<K, V>, ff: fn(K, V, i32) -> D) -> GCacheDebugInfo<D>
     where
-        K: Eq,
+        K: Eq + Hash,
         V: Resource,
 {
     let mut res = GCacheDebugInfo::<D> {
