@@ -15,6 +15,7 @@ use gimli::{LittleEndian};
 use libbpf_rs::{Error, libbpf_sys, Link, Map, MapFlags, MapHandle};
 use libbpf_rs::libbpf_sys::{bpf_map_batch_opts, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
+use libbpf_sys::{__u32, bpf_map_lookup_batch};
 use log::{debug, error, info};
 use prometheus::opts;
 
@@ -34,7 +35,7 @@ use crate::ebpf::symtab::symtab::SymbolTable;
 use crate::ebpf::sync::{PidOp, ProfilingType};
 use crate::ebpf::sync::PidOp::Dead;
 use crate::ebpf::wait_group::WaitGroup;
-use crate::error::Error::{InvalidData, OSError, SessionError};
+use crate::error::Error::{InvalidData, NotFound, OSError, SessionError};
 use crate::error::Result;
 
 mod profile {
@@ -66,7 +67,7 @@ pub type DiscoveryTarget = HashMap<String, String>;
 struct Pids {
     unknown: HashMap<u32, ()>,
     dead: HashMap<u32, ()>,
-    all: HashMap<u32, ProcInfoLite>,
+    pub all: HashMap<u32, ProcInfoLite>,
 }
 
 #[derive(Debug)]
@@ -303,7 +304,7 @@ impl Session<'_> {
 
     fn process_pid_info_requests(&mut self) {
         for pid in self.pid_info_requests.take().unwrap() {
-            let target = self.target_finder.find_target(&pid).unwrap().deref();
+            let target = self.target_finder.find_target(&pid).unwrap();
             debug!("pid info request: pid={}, target={:?}", pid, target);
 
             let already_dead = self.pids.dead.contains(&pid);
@@ -315,7 +316,7 @@ impl Session<'_> {
             if target.is_none() {
                 self.save_unknown_pid_locked(&pid);
             } else {
-                self.start_profiling_locked(&pid, target.unwrap());
+                self.start_profiling_locked(&pid, target);
             }
         }
     }
@@ -379,20 +380,20 @@ impl Session<'_> {
 
     fn get_counts_map_values(&mut self) -> Result<(Vec<sample_key>, Vec<u32>, bool), String> {
         let m = &self.bpf.maps().counts();
-        let map_size = m.max_entries();
+        let map_size  = m.info().unwrap().info.max_entries as usize;
         let mut keys = Vec::with_capacity(map_size);
         let mut values = Vec::with_capacity(map_size);
         let mut count: u32 = 10;
         let mut nkey = 0u32;
         unsafe {
             let n = bpf_map_lookup_and_delete_batch(
-                m.as_fd(),
+                m.as_fd().as_raw_fd(),
                 std::ptr::null_mut(),
                 nkey as *mut _,
-                keys.as_ptr(),
-                values.as_ptr(),
+                *keys.as_ptr(),
+                *values.as_ptr(),
                 (&mut count) as *mut u32,
-                bpf_map_batch_opts {
+                *bpf_map_batch_opts {
                     sz: 0,
                     elem_flags: 0,
                     flags: 0,
@@ -403,16 +404,17 @@ impl Session<'_> {
                 println!("getCountsMapValues BatchLookupAndDelete count: {}", n);
                 return Ok((keys[..n].to_vec(), values[..n].to_vec(), true));
             }
-
-            let mut result_keys: Vec<sample_key> = Vec::with_capacity(map_size);
-            let mut result_values: Vec<u32> = Vec::with_capacity(map_size);
-            let mut it = m.iterate();
-            while let Some((&k, &v)) = it.next() {
-                result_keys.push(k);
-                result_values.push(v);
-            }
-            println!("getCountsMapValues iter count: {}", keys.len());
-            Ok((result_keys, result_values, false))
+            Err(NotFound("".to_string()))
+            //
+            // let mut result_keys: Vec<sample_key> = Vec::with_capacity(map_size);
+            // let mut result_values: Vec<u32> = Vec::with_capacity(map_size);
+            // let mut it = m.iterate();
+            // while let Some((&k, &v)) = it.next() {
+            //     result_keys.push(k);
+            //     result_values.push(v);
+            // }
+            // println!("getCountsMapValues iter count: {}", keys.len());
+            // Ok((result_keys, result_values, false))
         }
     }
 
@@ -429,7 +431,7 @@ impl Session<'_> {
         // m.delete(keys)?;
         let ret = unsafe {
             libbpf_sys::bpf_map_delete_elem(
-                OwnedFd::from(m).as_raw_fd(),
+                m.as_fd().as_raw_fd(),
                 keys.as_ptr() as *const c_void
             )
         };
@@ -443,7 +445,7 @@ impl Session<'_> {
     }
 
     fn clear_stacks_map(&mut self, known_keys: &HashMap<u32, bool>) -> Result<(), String> {
-        let m = &self.bpf.stacks();
+        let m = &self.bpf.maps().stacks();
         let mut cnt = 0;
         let mut errs = 0;
 
@@ -497,7 +499,7 @@ impl Session<'_> {
     fn collect_regular_profile(&mut self, cb: CollectProfilesCallback) -> Result<()> {
         let mut sb = StackBuilder::new();
         let mut known_stacks: HashMap<u32, bool> = HashMap::new();
-        let (keys, values, batch) = self.get_counts_map_values()?;
+        let (keys, values, batch) = self.get_counts_map_values().unwrap();
 
         for (i, ck) in keys.iter().enumerate() {
             let value = values[i];
@@ -512,7 +514,7 @@ impl Session<'_> {
                 if self.pids.dead.contains(&ck.pid) {
                     continue;
                 }
-                if let Some(proc) = self.sym_cache.get_proc_table(ck.pid) {
+                if let Some(mut proc) = self.sym_cache.get_proc_table(ck.pid) {
                     let u_stack = self.get_stack(ck.user_stack).unwrap();
                     let k_stack = self.get_stack(ck.kern_stack).unwrap();
                     let mut stats = StackResolveStats::default();
@@ -525,11 +527,11 @@ impl Session<'_> {
                         self.walk_stack(&mut sb, &k_stack, &self.sym_cache.get_kallsyms(), &mut stats);
                     }
                     if sb.stack.len() > 1 {
-                        cb(labels, sb.stack.clone(), value, ck.pid, true);
+                        cb(labels, sb.stack.clone(), value as u64, ck.pid, true);
                         self.collect_metrics(&labels, &stats, &sb);
                     }
                 } else {
-                    self.pids.dead.insert(ck.pid, ck);
+                    self.pids.dead.insert(ck.pid, ());
                 }
             }
         }
@@ -537,6 +539,15 @@ impl Session<'_> {
         self.clear_stacks_map(&known_stacks)?;
 
         Ok(())
+    }
+
+    fn comm(&self, pid: u32) -> String {
+        if let Some(proc_info) = self.pids.all.get(&pid) {
+            if !proc_info.comm.is_empty() {
+                return proc_info.comm.clone();
+            }
+        }
+        "pid_unknown".to_string()
     }
 
     fn walk_stack(&self, sb: &mut StackBuilder, stack: &[u8], resolver: &mut dyn SymbolTable, stats: &mut StackResolveStats) {
@@ -643,6 +654,47 @@ impl Session<'_> {
 
         if self.round_number % 10 == 0 {
             self.check_stale_pids();
+        }
+    }
+
+    fn check_stale_pids(&self) {
+        let m = &self.bpf.maps().pids();
+        let map_size = m.max_entries();
+        let mut nkey = 0u32;
+        let mut keys = Vec::with_capacity(map_size);
+        let mut values = Vec::with_capacity(map_size);
+        let mut count: u32 = 10;
+        unsafe {
+            let n = bpf_map_lookup_batch(
+                m.as_fd().as_raw_fd(),
+                std::ptr::null_mut(),
+                nkey as *mut _,
+                *keys.as_ptr(),
+                *values.as_ptr(),
+                (&mut count) as *mut u32,
+                *bpf_map_batch_opts {
+                    sz: 0,
+                    elem_flags: 0,
+                    flags: 0,
+                },
+            );
+
+            debug!(self.logger, "check stale pids"; "count" => n);
+            for i in 0..n {
+                if let Err(err) = fs::metadata(format!("/proc/{}/status", keys[i])) {
+                    if err.kind() == std::io::ErrorKind::NotFound {
+                        if let Err(del_err) = m.delete(keys[i]) {
+                            error!(self.logger, "delete stale pid"; "pid" => keys[i], "err" => del_err);
+                        } else {
+                            debug!(self.logger, "stale pid deleted"; "pid" => keys[i]);
+                        }
+                    } else {
+                        error!(self.logger, "check stale pids"; "err" => err);
+                    }
+                } else {
+                    debug!(self.logger, "stale pid check : alive"; "pid" => keys[i], "config" => format!("{:?}", values[i]));
+                }
+            }
         }
     }
 }

@@ -5,7 +5,7 @@ use crate::ebpf::symtab::elf_cache::{ElfCache, ElfCacheDebugInfo};
 use crate::ebpf::symtab::elf_module::{ElfTableOptions, SymbolOptions};
 use crate::ebpf::symtab::gcache::{GCache, GCacheDebugInfo, GCacheOptions};
 use crate::ebpf::symtab::kallsyms::new_kallsyms;
-use crate::ebpf::symtab::proc::{ProcTable, ProcTableDebugInfo, ProcTableOptions};
+use crate::ebpf::symtab::proc::{ProcTable, ProcTableDebugInfo};
 use crate::ebpf::symtab::table::SymbolTab;
 use crate::error::Result;
 
@@ -58,11 +58,10 @@ impl<'a> SymbolCache<'a> {
         self.pid_cache.cleanup();
     }
 
-    pub fn get_proc_table(&mut self, pid: PidKey) -> ProcTable {
+    pub fn get_proc_table(&mut self, pid: PidKey) -> Option<ProcTable> {
         if let Some(cached) = self.pid_cache.get(&pid) {
-            return cached.clone();
+            return Some(cached.clone());
         }
-
         debug!("NewProcTable {}", pid);
         let fresh = ProcTable::new(
             pid as i32,
@@ -73,15 +72,14 @@ impl<'a> SymbolCache<'a> {
             },
         );
         self.pid_cache.cache(pid, fresh.clone());
-
-        fresh
+        Some(fresh)
     }
 
-    pub fn get_kallsyms(&mut self) -> &SymbolTab {
+    pub fn get_kallsyms(&mut self) -> &mut SymbolTab {
         if let Some(kallsyms) = &self.kallsyms {
-            return kallsyms.clone();
+            return &mut kallsyms.clone();
         }
-        &self.init_kallsyms()
+        &mut self.init_kallsyms()
     }
 
     fn init_kallsyms(&mut self) -> SymbolTab {

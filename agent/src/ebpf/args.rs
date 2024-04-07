@@ -1,9 +1,9 @@
 use std::time::Duration;
-use crate::iwm::Appendable;
-use crate::discovery::Target;
+use common::ebpf::sd::target::Target;
+use crate::appender::Appendable;
 
 pub struct Arguments {
-    pub forward_to: Vec<Appendable>,
+    pub forward_to: Vec<dyn Appendable>,
     pub targets: Option<Vec<Target>>,
     pub collect_interval: Option<Duration>,
     pub sample_rate: Option<i32>,

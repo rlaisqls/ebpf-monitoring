@@ -7,7 +7,6 @@ pub trait SymbolTable {
     fn resolve(&mut self, addr: u64) -> Option<&Symbol>;
 }
 
-
 pub trait SymbolNameResolver {
     fn refresh(&mut self);
     fn cleanup(&mut self);

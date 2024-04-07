@@ -73,7 +73,7 @@ impl ProfileBuilders {
     }
 
     fn add_sample(&mut self, sample: ProfileSample) {
-        let bb = self.builder_for_sample(sample.borrow());
+        let bb = self.builder_for_sample(&sample);
         bb.create_sample(sample);
     }
 
@@ -137,7 +137,7 @@ struct ProfileBuilder {
     pub labels: Labels,
 
     pub tmp_locations: Vec<Location>,
-    pub tmp_location_ids: Vec<u8>,
+    pub tmp_location_ids: Vec<u64>,
 
     pub pprof_builder: PProfBuilder
 }
@@ -193,23 +193,43 @@ impl ProfileBuilder {
         for s in &input_sample.stack {
             let loc = self.add_location(s);
             self.tmp_locations.push(loc.clone());
-            self.tmp_location_ids.push(loc.id as u8);
+            self.tmp_location_ids.push(loc.id);
         }
 
         let mut hasher = DefaultHasher::new();
         self.tmp_location_ids.hash(&mut hasher);
         let h = hasher.finish();
 
-        if let Some(sample) = self.sample_hash_to_sample.get(&h) {
+        if let Some(sample) = self.sample_hash_to_sample.get_mut(&h) {
             self.add_value(input_sample, sample);
             return;
         }
 
-        let sample = self.new_sample(input_sample);
-        self.add_value(input_sample, &sample);
-        sample.locations.copy_from_slice(&self.tmp_locations);
+        let mut sample = self.new_sample(input_sample);
+        self.add_value(input_sample, &mut sample);
+        sample.location_id.copy_from_slice(&self.tmp_location_ids);
         self.sample_hash_to_sample.insert(h, sample.clone());
         self.profile.sample.push(sample);
+    }
+
+    fn new_sample(&self, input_sample: &ProfileSample) -> Sample {
+        let mut sample = Sample::default();
+        if input_sample.sample_type == SampleType::Cpu {
+            sample.value = vec![0];
+        } else {
+            sample.value = vec![0, 0];
+        }
+        sample.location_id = vec![0; input_sample.stack.len()];
+        sample
+    }
+
+    fn add_value(&self, input_sample: &ProfileSample, sample: &mut Sample) {
+        if input_sample.sample_type == SampleType::Cpu {
+            sample.value[0] += input_sample.value * self.profile.period;
+        } else {
+            sample.value[0] += input_sample.value;
+            sample.value[1] += input_sample.value2;
+        }
     }
 
     fn add_location(&mut self, function: &str) -> Location {
@@ -256,7 +276,7 @@ impl ProfileBuilder {
 
     pub fn write(&self, dst: &mut dyn Write) -> Result<()> {
         let mut gzip_writer = GzEncoder::new(
-            &mut dst.borrow(), Compression::default()
+            dst, Compression::default()
         );
         self.profile.write_uncompressed(&mut gzip_writer).unwrap();
         gzip_writer.finish().unwrap();
