@@ -134,13 +134,13 @@ impl TargetFinder {
         }
     }
 
-    pub(crate) fn find_target(&self, pid: u32) -> Option<Target> {
-        if let Some(target) = self.pid2target.get(&pid) {
+    pub(crate) fn find_target(&self, pid: &u32) -> Option<Target> {
+        if let Some(target) = self.pid2target.get(pid) {
             return Some(target.clone());
         }
         let cid = {
             let mut cache = self.container_id_cache.lock().unwrap();
-            cache.get(&pid).cloned()
+            cache.get(pid).cloned()
         };
         match cid {
             Some(cid) => self.cid2target.get(&cid).cloned(),
@@ -199,7 +199,7 @@ impl TargetFinder {
         self.cid2target.clone()
             .iter_mut()
             .map(|(_, &mut target)| {
-                let (key, value) = target.labels(); // Cannot move
+                let (key, value) = target.labels();
                 format!("{}: {}", key, value)
             })
             .collect()
@@ -209,7 +209,6 @@ impl TargetFinder {
         self.cid2target.values().cloned().collect()
     }
 }
-
 
 fn pid_from_target(target: &DiscoveryTarget) -> Option<u32> {
     if let Some(t) = target.get(LABEL_PID) {

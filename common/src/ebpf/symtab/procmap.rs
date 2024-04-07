@@ -4,7 +4,7 @@ use crate::ebpf::symtab::proc::ProcTable;
 
 
 // ProcMapPermissions contains permission settings read from `/proc/[pid]/maps`.
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
 pub struct ProcMapPermissions {
     read: bool,
     write: bool,
@@ -15,7 +15,7 @@ pub struct ProcMapPermissions {
 
 // ProcMap contains the process memory-mappings of the process
 // read from `/proc/[pid]/maps`.
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
 pub struct ProcMap {
     pub(crate) start_addr: u64,
     pub(crate) end_addr: u64,

@@ -3,7 +3,7 @@ pub enum ProfilingType {
     Unknown = 1,
     FramePointers = 2,
     Python = 3,
-    Error = 4,
+    TypeError = 4,
 }
 
 #[derive(Debug)]

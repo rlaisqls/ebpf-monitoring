@@ -170,14 +170,12 @@ impl<'a> ProcTable<'a> {
         };
 
         for map in maps {
-            let range = ElfRange {
-                map_range: map,
-                elf_table: None,
-            };
-            self.ranges.push(range.clone());
-            if let Some(elf_table) = self.get_elf_table(range) {
-                self.file_to_table.insert(range.map_range.file(), elf_table);
-                files_to_keep.insert(range.map_range.file(), ());
+            if let Some(_elf_table) = self.get_elf_table(map) {
+                files_to_keep.insert(map.file(), ());
+                self.ranges.push(Arc::new(ElfRange {
+                    map_range: map.clone(),
+                    elf_table: None,
+                }));
             }
         }
 
@@ -188,19 +186,18 @@ impl<'a> ProcTable<'a> {
             .collect();
 
         for file in files_to_delete {
-            self.file_to_table.remove(file);
+            self.file_to_table.remove(&file);
         }
         Ok(())
     }
 
-    fn get_elf_table(&mut self, r: ElfRange) -> Option<&mut ElfTable> {
-        let f = r.map_range.file();
+    fn get_elf_table(&mut self, r: ProcMap) -> Option<&mut ElfTable> {
+        let f = r.file();
         if let Some(e) = self.file_to_table.get_mut(&f) {
             Some(e)
         } else {
-            let e = self.create_elf_table(r.map_range);
-            if let Some(e) = e {
-                self.file_to_table.insert(f.clone(), e);
+            if let Some(e) = self.create_elf_table(r) {
+                self.file_to_table.insert(f, e);
             }
             self.file_to_table.get_mut(&f)
         }
@@ -215,6 +212,12 @@ impl<'a> ProcTable<'a> {
             self.root_fs.to_str().unwrap().to_string(),
             self.elf_table_options.clone()
         ))
+    }
+}
+
+impl FromIterator<&File> for Vec<File> {
+    fn from_iter<I: IntoIterator<Item = &File>>(iter: I) -> Self {
+        iter.into_iter().map(|&f| f.clone()).collect()
     }
 }
 

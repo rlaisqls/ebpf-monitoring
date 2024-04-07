@@ -33,8 +33,8 @@ struct PerfEventHeader {
 #[derive(Debug)]
 pub struct Record {
     cpu: i32,
-    raw_sample: Vec<u8>,
-    lost_samples: u64,
+    pub(crate) raw_sample: Vec<u8>,
+    pub(crate) lost_samples: u64,
     remaining: i32,
 }
 
