@@ -679,20 +679,20 @@ impl Session<'_> {
                 },
             );
 
-            debug!(self.logger, "check stale pids"; "count" => n);
+            dbg!("check stale pids count: {}", n);
             for i in 0..n {
                 if let Err(err) = fs::metadata(format!("/proc/{}/status", keys[i])) {
                     if err.kind() == std::io::ErrorKind::NotFound {
                         if let Err(del_err) = m.delete(keys[i]) {
-                            error!(self.logger, "delete stale pid"; "pid" => keys[i], "err" => del_err);
+                            error!("delete stale pid pid: {}, err: {}", keys[i], del_err);
                         } else {
-                            debug!(self.logger, "stale pid deleted"; "pid" => keys[i]);
+                            dbg!("stale pid deleted pid: {}", keys[i]);
                         }
                     } else {
-                        error!(self.logger, "check stale pids"; "err" => err);
+                        error!("check stale pids err: {}", err);
                     }
                 } else {
-                    debug!(self.logger, "stale pid check : alive"; "pid" => keys[i], "config" => format!("{:?}", values[i]));
+                    dbg!("stale pid check : alive pid: {}, config: {:?}", keys[i], values[i]);
                 }
             }
         }
