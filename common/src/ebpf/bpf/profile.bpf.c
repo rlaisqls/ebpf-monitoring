@@ -34,7 +34,7 @@ int do_perf_event(struct bpf_perf_event_data *ctx) {
     struct pid_config *config = bpf_map_lookup_elem(&pids, &tgid);
     if (config == NULL) {
         struct pid_config unknown = {
-                .type = PROFILING_TYPE_UNKNOWN,
+                .profile_type = PROFILING_TYPE_UNKNOWN,
                 .collect_kernel = 0,
                 .collect_user = 0,
                 .padding_ = 0
@@ -51,16 +51,16 @@ int do_perf_event(struct bpf_perf_event_data *ctx) {
         return 0;
     }
 
-    if (config->type == PROFILING_TYPE_ERROR || config->type == PROFILING_TYPE_UNKNOWN) {
+    if (config->profile_type == PROFILING_TYPE_ERROR || config->profile_type == PROFILING_TYPE_UNKNOWN) {
         return 0;
     }
 
-    if (config->type == PROFILING_TYPE_PYTHON) {
+    if (config->profile_type == PROFILING_TYPE_PYTHON) {
         bpf_tail_call(ctx, &progs, PROG_IDX_PYTHON);
         return 0;
     }
 
-    if (config->type == PROFILING_TYPE_FRAMEPOINTERS) {
+    if (config->profile_type == PROFILING_TYPE_FRAMEPOINTERS) {
         key.pid = tgid;
         key.kern_stack = -1;
         key.user_stack = -1;

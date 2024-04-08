@@ -15,7 +15,7 @@ struct sample_key k__;
 #define PROFILING_TYPE_ERROR 4
 
 struct pid_config {
-    uint8_t type;
+    uint8_t profile_type;
     uint8_t collect_user;
     uint8_t collect_kernel;
     uint8_t padding_;

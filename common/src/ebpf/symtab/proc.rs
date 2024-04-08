@@ -232,7 +232,7 @@ impl<'a> ProcTable<'a> {
 }
 
 impl FromIterator<&File> for Vec<File> {
-    fn from_iter<I: IntoIterator<Item = &File>>(iter: I) -> Self {
+    fn from_iter<I: for<'a> IntoIterator<Item = &'a File>>(iter: I) -> Self {
         iter.into_iter().map(|&f| f.clone()).collect()
     }
 }
