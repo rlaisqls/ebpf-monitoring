@@ -96,13 +96,13 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
         self.round_cache.remove(k);
     }
 
-    pub fn each_lru(&self, f: fn(&K, &V, i32)) {
+    pub fn each_lru(&self, f: impl Fn(&K, &V, i32)) {
         for (k, entry) in self.lru_cache.iter() {
             f(k, &entry.v, entry.round);
         }
     }
 
-    pub fn each_round(&self, f: fn(&K, &V, i32)) {
+    pub fn each_round(&self, f: impl Fn(&K, &V, i32)) {
         for (k, entry) in &self.round_cache {
             f(k, &entry.v, entry.round);
         }

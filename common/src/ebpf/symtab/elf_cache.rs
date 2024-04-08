@@ -66,16 +66,16 @@ impl<'a> ElfCache<'a> {
     }
 
     pub fn debug_info(&self) -> ElfCacheDebugInfo {
-        let build_id_cache = debug_info::<BuildID, dyn SymbolNameResolver, SymTabDebugInfo>(
+        let build_id_cache = debug_info::<BuildID, SymbolNameTable, SymTabDebugInfo>(
             self.build_id_cache.lock().unwrap().deref(),
-            |b: &BuildID, v: &dyn SymbolNameResolver, round: i32| {
+            |b: &BuildID, v: &SymbolNameTable, round: i32| {
                 let mut res = v.debug_info();
                 res.last_used_round = round;
                 res
             });
-        let same_file_cache = debug_info::<Stat, dyn SymbolNameResolver, SymTabDebugInfo>(
+        let same_file_cache = debug_info::<Stat, SymbolNameTable, SymTabDebugInfo>(
             self.same_file_cache.lock().unwrap().deref(),
-            |s: &Stat, v: &dyn SymbolNameResolver, round: i32| {
+            |s: &Stat, v: &SymbolNameTable, round: i32| {
                 let mut res = v.debug_info();
                 res.last_used_round = round;
                 res
