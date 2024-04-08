@@ -53,18 +53,18 @@ impl SymbolTable for ProcTable<'_> {
         self.cleanup()
     }
 
-    fn resolve(&mut self, pc: u64) -> Symbol {
+    fn resolve(&mut self, pc: u64) -> Option<&Symbol> {
         if pc == 0xcccccccccccccccc || pc == 0x9090909090909090 {
-            return Symbol {
+            return Some(&Symbol {
                 start: 0,
                 name: "end_of_stack".to_string(),
                 module: "[unknown]".to_string(),
-            };
+            });
         }
 
         let i = self.ranges.binary_search_by(|e| binary_search_elf_range(e, pc));
         if i.is_err() {
-            return Symbol::default();
+            return Some(&Symbol::default());
         }
 
         let r = &self.ranges.get_mut(i.unwrap()).unwrap();
@@ -72,22 +72,22 @@ impl SymbolTable for ProcTable<'_> {
             let module_offset = pc - t.base;
             return match t.resolve(pc) {
                 Some(s) => {
-                    Symbol {
+                    Some(&Symbol {
                         start: module_offset,
                         name: s,
                         module: r.map_range.pathname.clone(),
-                    }
+                    })
                 }
                 None => {
-                    Symbol {
+                    Some(&Symbol {
                         start: module_offset,
                         name: "".to_string(),
                         module: r.map_range.pathname.clone(),
-                    }
+                    })
                 }
             }
         }
-        Symbol::default()
+        Some(&Symbol::default())
     }
 }
 

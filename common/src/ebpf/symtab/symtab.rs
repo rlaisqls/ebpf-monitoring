@@ -5,7 +5,7 @@ use crate::ebpf::symtab::table::Symbol;
 pub trait SymbolTable {
     fn refresh(&mut self);
     fn cleanup(&mut self);
-    fn resolve(&mut self, addr: u64) -> Symbol;
+    fn resolve(&mut self, addr: u64) -> Option<&Symbol>;
 }
 
 pub trait SymbolNameResolver {

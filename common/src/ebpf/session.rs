@@ -545,10 +545,11 @@ impl Session<'_> {
                     sb.reset();
                     sb.append(self.comm(ck.pid));
                     if self.options.collect_user {
-                        self.walk_stack(&mut sb, &u_stack, &proc.borrow_mut(), &mut stats);
+                        self.walk_stack(&mut sb, &u_stack, proc, &mut stats);
                     }
                     if self.options.collect_kernel {
-                        self.walk_stack(&mut sb, &k_stack, &self.sym_cache.get_kallsyms(), &mut stats);
+                        let mut a = self.sym_cache.get_kallsyms();
+                        self.walk_stack(&mut sb, &k_stack, a, &mut stats);
                     }
                     if sb.stack.len() > 1 {
                         cb(ProfileSample{
@@ -580,7 +581,7 @@ impl Session<'_> {
         "pid_unknown".to_string()
     }
 
-    fn walk_stack(&self, sb: &mut StackBuilder, stack: &[u8], resolver: &mut dyn SymbolTable, stats: &mut StackResolveStats) {
+    fn walk_stack(&self, sb: &mut StackBuilder, stack: &[u8], mut resolver: Arc<dyn SymbolTable>, stats: &mut StackResolveStats) {
         if stack.is_empty() {
             return;
         }
@@ -596,7 +597,7 @@ impl Session<'_> {
             if instruction_pointer == 0 {
                 break;
             }
-            let sym = resolver.resolve(instruction_pointer);
+            let sym = resolver.resolve(instruction_pointer).unwrap();
             let name = if !sym.name.is_empty() {
                 stats.known += 1;
                 sym.name.clone()

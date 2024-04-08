@@ -78,11 +78,11 @@ impl<'a> SymbolCache<'a> {
         Some(fresh.clone())
     }
 
-    pub fn get_kallsyms(&mut self) -> &mut SymbolTab {
+    pub fn get_kallsyms(&mut self) -> Arc<SymbolTab> {
         if let Some(kallsyms) = &self.kallsyms {
-            return &mut kallsyms.clone();
+            return kallsyms.clone();
         }
-        &mut self.init_kallsyms()
+        self.init_kallsyms()
     }
 
     fn init_kallsyms(&mut self) -> Arc<SymbolTab> {
