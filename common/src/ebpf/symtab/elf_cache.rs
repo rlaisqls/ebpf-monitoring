@@ -22,7 +22,7 @@ impl<'a> ElfCache<'a> {
     }
 
     pub fn get_symbols_by_build_id(&self, build_id: &BuildID) -> Option<SymbolNameTable> {
-        let res = self.build_id_cache.lock().unwrap().get(build_id);
+        let res = self.build_id_cache.lock().unwrap().get(build_id).unwrap();
         if res.is_dead() {
             self.build_id_cache.lock().unwrap().remove(build_id);
             return None;
@@ -36,11 +36,15 @@ impl<'a> ElfCache<'a> {
 
     pub fn get_symbols_by_stat(&self, s: Stat) -> Option<SymbolNameTable> {
         let res = self.same_file_cache.lock().unwrap().get(&s);
-        if res.is_dead() {
+        if res.is_none() {
+            return None
+        }
+        let sym_tab = res.unwrap();
+        if sym_tab.is_dead() {
             self.same_file_cache.lock().unwrap().remove(&s);
             return None;
         }
-        Some(res)
+        Some(sym_tab)
     }
 
     pub fn cache_by_stat(&self, s: Stat, v: Arc<SymbolNameTable>) {

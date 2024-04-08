@@ -1,7 +1,5 @@
 use std::io::{self, BufRead};
 use std::str::FromStr;
-use crate::ebpf::symtab::proc::ProcTable;
-
 
 // ProcMapPermissions contains permission settings read from `/proc/[pid]/maps`.
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
@@ -145,9 +143,9 @@ fn mkdev(major: u32, minor: u32) -> u64 {
 
 
 fn parse_addresses(s: &str) -> Result<(u64, u64), &'static str> {
-    let i = s.chars().position(|b| b == b'-').ok_or("Invalid address").unwrap();
+    let i = s.chars().position(|b| b == '-').ok_or("Invalid address").unwrap();
     let (saddr_bytes, eaddr_bytes) = s.split_at(i);
-    let eaddr_bytes = &eaddr_bytes[1..]; // '-' 다음 바이트로 이동
+    let eaddr_bytes = &eaddr_bytes[1..]; // Move to next byte of '-'
 
     let saddr = parse_address(saddr_bytes).unwrap();
     let eaddr = parse_address(eaddr_bytes).unwrap();

@@ -241,7 +241,7 @@ fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool) ->
     let mut modules = Vec::new();
     let mut remaining = proc_maps;
     while !remaining.is_empty() {
-        let nl = remaining.chars().position(|x| x == b'\n').unwrap_or(remaining.len());
+        let nl = remaining.chars().position(|x| x == '\n').unwrap_or(remaining.len());
         let (line, rest) = remaining.split_at(nl);
         remaining = if rest.is_empty() { rest } else { &rest[1..] };
         if line.is_empty() {

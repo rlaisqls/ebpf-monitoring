@@ -542,10 +542,10 @@ impl Session<'_> {
                     sb.reset();
                     sb.append(self.comm(ck.pid));
                     if self.options.collect_user {
-                        self.walk_stack(&mut sb, &u_stack, &proc, &mut stats);
+                        self.walk_stack(&mut sb, &u_stack, &mut proc, &mut stats);
                     }
                     if self.options.collect_kernel {
-                        self.walk_stack(&mut sb, &k_stack, &self.sym_cache.get_kallsyms(), &mut stats);
+                        self.walk_stack(&mut sb, &k_stack, &mut self.sym_cache.get_kallsyms(), &mut stats);
                     }
                     if sb.stack.len() > 1 {
                         cb(labels, sb.stack.clone(), value as u64, ck.pid, true);
