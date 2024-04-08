@@ -20,10 +20,10 @@ pub type PidKey = u32;
 // resolving kernel symbols
 pub struct SymbolCache<'a> {
     pid_cache: GCache<PidKey, ProcTable<'a>>,
-    elf_cache: ElfCache<'a>,
+    elf_cache: Arc<ElfCache<'a>>,
     kallsyms: Option<Arc<SymbolTab>>,
     options: CacheOptions,
-    metrics: SymtabMetrics,
+    metrics: Arc<SymtabMetrics>,
 }
 
 #[derive(Copy, Clone)]
@@ -45,9 +45,9 @@ impl<'a> SymbolCache<'a> {
         Ok(Self {
             pid_cache,
             kallsyms: None,
-            elf_cache,
+            elf_cache: Arc::new(elf_cache),
             options,
-            metrics: metrics.clone(),
+            metrics: Arc::new(metrics.clone()),
         })
     }
 
@@ -69,9 +69,9 @@ impl<'a> SymbolCache<'a> {
         let fresh = Arc::new(ProcTable::new(
             pid as i32,
             ElfTableOptions {
-                    elf_cache: self.elf_cache.clone(),
-                    metrics: self.metrics.clone(),
-                    symbol_options: self.options.symbol_options,
+                elf_cache: self.elf_cache.clone(),
+                metrics: self.metrics.clone(),
+                symbol_options: self.options.symbol_options,
             },
         ));
         self.pid_cache.cache(pid, fresh);

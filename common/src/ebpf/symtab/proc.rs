@@ -67,7 +67,7 @@ impl SymbolTable for ProcTable<'_> {
             return Symbol::default();
         }
 
-        let r = &self.ranges.get_mut(i).unwrap();
+        let r = &self.ranges.get_mut(i.unwrap()).unwrap();
         if let Some(mut t) = &r.elf_table {
             let module_offset = pc - t.base;
             return match t.resolve(pc) {

@@ -21,8 +21,8 @@ use crate::error::Result;
 
 #[derive(Clone)]
 pub struct ElfTableOptions<'a> {
-    pub(crate) elf_cache: ElfCache<'a>,
-    pub(crate) metrics: SymtabMetrics,
+    pub(crate) elf_cache: Arc<ElfCache<'a>>,
+    pub(crate) metrics: Arc<SymtabMetrics>,
     pub(crate) symbol_options: SymbolOptions,
 }
 

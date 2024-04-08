@@ -412,7 +412,7 @@ impl Session<'_> {
         Ok(())
     }
 
-    fn get_counts_map_values(&mut self) -> Result<(Vec<sample_key>, Vec<u32>, bool), String> {
+    fn get_counts_map_values(&mut self) -> Result<(Vec<sample_key>, Vec<u32>, bool)> {
         let m = &self.bpf.maps().counts();
         let map_size  = m.info().unwrap().info.max_entries as usize;
         let mut keys = Vec::with_capacity(map_size);
@@ -435,8 +435,9 @@ impl Session<'_> {
             );
 
             if n > 0 {
+                let size = n as usize;
                 println!("getCountsMapValues BatchLookupAndDelete count: {}", n);
-                return Ok((keys[..n].to_vec(), values[..n].to_vec(), true));
+                return Ok((keys[..size].to_vec(), values[..size].to_vec(), true));
             }
             Err(NotFound("".to_string()))
             //
@@ -502,7 +503,7 @@ impl Session<'_> {
         }
 
         for stack_id in known_keys.keys() {
-            if let Err(_e) = m.delete(stack_id.to_le_bytes()) {
+            if let Err(_e) = m.delete(&stack_id.to_le_bytes()) {
                 errs += 1;
             } else {
                 cnt += 1;
@@ -544,10 +545,10 @@ impl Session<'_> {
                     sb.reset();
                     sb.append(self.comm(ck.pid));
                     if self.options.collect_user {
-                        self.walk_stack(&mut sb, &u_stack, &mut proc, &mut stats);
+                        self.walk_stack(&mut sb, &u_stack, &proc.borrow_mut(), &mut stats);
                     }
                     if self.options.collect_kernel {
-                        self.walk_stack(&mut sb, &k_stack, &mut self.sym_cache.get_kallsyms(), &mut stats);
+                        self.walk_stack(&mut sb, &k_stack, &self.sym_cache.get_kallsyms(), &mut stats);
                     }
                     if sb.stack.len() > 1 {
                         cb(ProfileSample{
@@ -635,11 +636,11 @@ impl Session<'_> {
     fn collect_metrics(&self, labels: &Target, stats: &StackResolveStats, sb: &StackBuilder) {
         let m = &self.options.metrics.symtab;
         let service_name = labels.service_name();
-        if m != &SymtabMetrics::default() {
-            m.known_symbols.with_label_values(&[&service_name]).inc_by(stats.known as f64);
-            m.unknown_symbols.with_label_values(&[&service_name]).inc_by(stats.unknown_symbols as f64);
-            m.unknown_modules.with_label_values(&[&service_name]).inc_by(stats.unknown_modules as f64);
-        }
+
+        m.known_symbols.with_label_values(&[&service_name]).inc_by(stats.known as f64);
+        m.unknown_symbols.with_label_values(&[&service_name]).inc_by(stats.unknown_symbols as f64);
+        m.unknown_modules.with_label_values(&[&service_name]).inc_by(stats.unknown_modules as f64);
+
         if sb.stack.len() > 2 && stats.unknown_symbols + stats.unknown_modules > stats.known {
             m.unknown_stacks.with_label_values(&[&service_name]).inc();
         }
@@ -711,7 +712,7 @@ impl Session<'_> {
             for i in 0..n {
                 if let Err(err) = fs::metadata(format!("/proc/{}/status", keys[i as usize] as __u32)) {
                     if err.kind() == std::io::ErrorKind::NotFound {
-                        if let Err(del_err) = m.delete(keys[i]) {
+                        if let Err(_del_err) = m.delete(keys[i]) {
                             error!("delete stale pid pid");
                         } else {
                             dbg!("stale pid deleted pid");
@@ -720,7 +721,7 @@ impl Session<'_> {
                         error!("check stale pids err: {}", err);
                     }
                 } else {
-                    dbg!("stale pid check : alive, config: {:?}", values[i]);
+                    dbg!("stale pid check : alive");
                 }
             }
         }
