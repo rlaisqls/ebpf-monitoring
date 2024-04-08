@@ -712,7 +712,7 @@ impl Session<'_> {
             for i in 0..n {
                 if let Err(err) = fs::metadata(format!("/proc/{}/status", keys[i as usize] as __u32)) {
                     if err.kind() == std::io::ErrorKind::NotFound {
-                        if let Err(_del_err) = m.delete(keys[i as usize]) {
+                        if let Err(_del_err) = m.delete(&keys[i as usize].to_le_bytes()) {
                             error!("delete stale pid pid");
                         } else {
                             dbg!("stale pid deleted pid");
