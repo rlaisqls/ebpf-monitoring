@@ -1,3 +1,4 @@
+use std::cmp::Ordering::{Equal, Greater, Less};
 use std::collections::HashMap;
 use std::fs;
 use std::ops::Deref;
@@ -52,39 +53,41 @@ impl SymbolTable for ProcTable<'_> {
         self.cleanup()
     }
 
-    fn resolve(&mut self, pc: u64) -> Option<&Symbol> {
+    fn resolve(&mut self, pc: u64) -> Symbol {
         if pc == 0xcccccccccccccccc || pc == 0x9090909090909090 {
-            return Some(&Symbol {
+            return Symbol {
                 start: 0,
                 name: "end_of_stack".to_string(),
                 module: "[unknown]".to_string(),
-            });
+            };
         }
 
-        let (i, found) = binary_search_func(&self.ranges, pc, binary_search_elf_range);
-        if !found { return None; }
+        let i = self.ranges.binary_search_by(|e| binary_search_elf_range(e, pc));
+        if i.is_err() {
+            return Symbol::default();
+        }
 
         let r = &self.ranges.get_mut(i).unwrap();
         if let Some(mut t) = &r.elf_table {
             let module_offset = pc - t.base;
             return match t.resolve(pc) {
                 Some(s) => {
-                    Some(&Symbol {
+                    Symbol {
                         start: module_offset,
                         name: s,
                         module: r.map_range.pathname.clone(),
-                    })
+                    }
                 }
                 None => {
-                    Some(&Symbol {
+                    Symbol {
                         start: module_offset,
                         name: "".to_string(),
                         module: r.map_range.pathname.clone(),
-                    })
+                    }
                 }
             }
         }
-        None
+        Symbol::default()
     }
 }
 
@@ -99,7 +102,7 @@ fn binary_search_func<S, E, T, F>(x: &[E], target: T, mut cmp: F) -> (usize, boo
     while i < j {
         let h = (i + j) / 2;
         match cmp(&x[h], &target) {
-            std::cmp::Ordering::Less => {
+            Less => {
                 i = h + 1;
             }
             _ => {
@@ -107,17 +110,17 @@ fn binary_search_func<S, E, T, F>(x: &[E], target: T, mut cmp: F) -> (usize, boo
             }
         }
     }
-    (i, i < x.len() && cmp(&x[i], &target) == std::cmp::Ordering::Equal)
+    (i, i < x.len() && cmp(&x[i], &target) == Equal)
 }
 
-fn binary_search_elf_range(e: &ElfRange, pc: &u64) -> i32 {
-    if pc < &e.map_range.start_addr {
-        return 1;
+fn binary_search_elf_range(e: &ElfRange, pc: u64) -> std::cmp::Ordering {
+    if pc < e.map_range.start_addr {
+        Greater
+    } else if pc >= e.map_range.end_addr {
+        Less
+    } else {
+        Equal
     }
-    if pc >= &e.map_range.end_addr {
-        return -1;
-    }
-    0
 }
 
 impl<'a> ProcTable<'a> {

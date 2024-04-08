@@ -7,6 +7,16 @@ pub struct Symbol {
     pub(crate) module: String
 }
 
+impl Default for Symbol {
+    fn default() -> Self {
+        Self {
+            start: 0,
+            name: "".to_string(),
+            module: "".to_string(),
+        }
+    }
+}
+
 pub struct SymbolTab {
     pub(crate) symbols: Vec<Symbol>,
     base: u64,

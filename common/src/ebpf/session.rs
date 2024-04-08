@@ -513,7 +513,7 @@ impl Session<'_> {
     }
 
     pub fn debug_info(&self) -> SessionDebugInfo {
-        SessionDebugInfo
+        SessionDebugInfo {
             elf_cache: self.sym_cache.elf_cache_debug_info(),
             pid_cache: self.sym_cache.pid_cache_debug_info()
         }
@@ -595,7 +595,7 @@ impl Session<'_> {
             if instruction_pointer == 0 {
                 break;
             }
-            let sym = resolver.resolve(instruction_pointer).unwrap();
+            let sym = resolver.resolve(instruction_pointer);
             let name = if !sym.name.is_empty() {
                 stats.known += 1;
                 sym.name.clone()
@@ -628,7 +628,7 @@ impl Session<'_> {
         }
         let stack_id_u32 = stack_id as u32;
         self.bpf.maps().stacks()
-            .lookup(stack_id_u32.to_le_bytes(), MapFlags::ANY)
+            .lookup(stack_id_u32.to_le_bytes().as_slice(), MapFlags::ANY)
             .unwrap_or_else(|_| None)
     }
 
