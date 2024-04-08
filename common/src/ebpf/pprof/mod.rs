@@ -228,8 +228,8 @@ impl ProfileBuilder {
         if input_sample.sample_type == SampleType::Cpu {
             sample.value[0] += input_sample.value * self.profile.period;
         } else {
-            sample.value[0] += input_sample.value;
-            sample.value[1] += input_sample.value2;
+            sample.value[0] += input_sample.value as i64;
+            sample.value[1] += input_sample.value2 as i64;
         }
     }
 

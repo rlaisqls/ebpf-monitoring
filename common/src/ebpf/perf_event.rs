@@ -88,7 +88,8 @@ impl PerfEvent {
             libc::close(self.fd);
         }
         if let Some(link) = self.link.take() {
-            link.close();
+            // link.close()
+            link.detach().unwrap();
         }
         Ok(())
     }

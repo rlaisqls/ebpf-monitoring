@@ -1,5 +1,5 @@
 use std::ops::Deref;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use gimli::DebugInfo;
 use crate::error::Result;
 use crate::ebpf::symtab::elf::buildid::BuildID;
@@ -30,7 +30,7 @@ impl<'a> ElfCache<'a> {
         Some(res)
     }
 
-    pub fn cache_by_build_id(&self, build_id: BuildID, v: &SymbolNameTable) {
+    pub fn cache_by_build_id(&self, build_id: BuildID, v: Arc<SymbolNameTable>) {
         self.build_id_cache.lock().unwrap().cache(build_id, v);
     }
 
@@ -43,7 +43,7 @@ impl<'a> ElfCache<'a> {
         Some(res)
     }
 
-    pub fn cache_by_stat(&self, s: Stat, v: &SymbolNameTable) {
+    pub fn cache_by_stat(&self, s: Stat, v: Arc<SymbolNameTable>) {
         self.same_file_cache.lock().unwrap().cache(s, v);
     }
 
@@ -67,14 +67,14 @@ impl<'a> ElfCache<'a> {
             self.build_id_cache.lock().unwrap().deref(),
             |b: &BuildID, v: &dyn SymbolNameResolver, round: i32| {
                 let mut res = v.debug_info();
-                res.last_used_round = round as usize;
+                res.last_used_round = round;
                 res
             });
         let same_file_cache = debug_info::<Stat, dyn SymbolNameResolver, SymTabDebugInfo>(
             self.same_file_cache.lock().unwrap().deref(),
             |s: &Stat, v: &dyn SymbolNameResolver, round: i32| {
                 let mut res = v.debug_info();
-                res.last_used_round = round as usize;
+                res.last_used_round = round;
                 res
             });
         ElfCacheDebugInfo { build_id_cache, same_file_cache }

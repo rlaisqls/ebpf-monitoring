@@ -159,8 +159,8 @@ impl Reader {
                 }
 
                 for event in self.epoll_events.iter() {
-                    let ring = &self.rings[event.cpu_for_event()];
-                    self.epoll_rings.push(ring.clone());
+                    let ring = self.rings[event.key].clone();
+                    self.epoll_rings.push(ring);
 
                     // Read the current head pointer now, not every time
                     // we read a record. This prevents a single fast producer

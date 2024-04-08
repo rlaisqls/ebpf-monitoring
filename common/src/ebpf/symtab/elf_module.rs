@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use log::info;
 use std::borrow::BorrowMut;
+use std::sync::Arc;
 use goblin::elf::header::ET_EXEC;
 use goblin::elf::program_header::{PF_X, PT_LOAD};
 use rustix::path::Arg;
@@ -39,7 +40,7 @@ impl Default for SymbolOptions {
 #[derive(Eq, PartialEq, PartialOrd, Ord)]
 pub struct ElfTable<'a> {
     fs: String,
-    pub(crate) table: Box<dyn SymbolNameResolver>,
+    pub(crate) table: Arc<dyn SymbolNameResolver>,
     pub(crate) base: u64,
     loaded: bool,
     loaded_cached: bool,
@@ -52,7 +53,7 @@ impl ElfTable<'_> {
     pub fn new(proc_map: ProcMap, fs: String, options: ElfTableOptions) -> Self {
         Self {
             fs,
-            table: Box::new(NoopSymbolNameResolver {}),
+            table: Arc::new(NoopSymbolNameResolver {}),
             base: 0,
             loaded: false,
             loaded_cached: false,
@@ -92,7 +93,7 @@ impl ElfTable<'_> {
         };
 
         if let Some(symbols) = self.options.elf_cache.get_symbols_by_build_id(&build_id) {
-            self.table = Box::new(symbols);
+            self.table = Arc::new(symbols);
             self.loaded_cached = true;
             return;
         }
@@ -106,7 +107,7 @@ impl ElfTable<'_> {
         };
 
         if let Some(symbols) = self.options.elf_cache.get_symbols_by_stat(stat_from_file_info(&file_info)) {
-            self.table = Box::new(symbols);
+            self.table = Arc::new(symbols);
             self.loaded_cached = true;
             return;
         }
@@ -122,30 +123,30 @@ impl ElfTable<'_> {
                 }
             };
 
-            let symbols = match self.create_symbol_table(debug_me) {
+            let symbols = Arc::new(match self.create_symbol_table(debug_me) {
                 Ok(sym) => sym,
                 Err(err) => {
                     self.on_load_error(err);
                     return;
                 }
-            };
-            self.table = Box::new(symbols);
-            self.options.elf_cache.cache_by_build_id(build_id, &symbols);
+            });
+            self.table = symbols.clone();
+            self.options.elf_cache.cache_by_build_id(build_id, symbols);
             return;
         }
 
-        let symbols = match self.create_symbol_table(me) {
+        let symbols = Arc::new(match self.create_symbol_table(me) {
             Ok(sym) => sym,
             Err(_err) => {
                 return;
             }
-        };
+        });
 
-        self.table = Box::new(symbols);
+        self.table = symbols;
         if build_id.is_empty() {
-            self.options.elf_cache.cache_by_stat(stat_from_file_info(&file_info), symbols.borrow());
+            self.options.elf_cache.cache_by_stat(stat_from_file_info(&file_info), symbols.clone());
         } else {
-            self.options.elf_cache.cache_by_build_id(build_id, &symbols);
+            self.options.elf_cache.cache_by_build_id(build_id, symbols);
         }
     }
 

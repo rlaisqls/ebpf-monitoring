@@ -35,21 +35,21 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
         self.round += 1;
     }
 
-    pub fn get(&mut self, k: &K) -> V {
+    pub fn get(&mut self, k: &K) -> Option<V> {
         if let Some(entry) = self.lru_cache.get_mut(k) {
             if entry.round != self.round {
                 entry.round = self.round;
                 entry.v.refresh();
             }
-            entry.v.clone()
+            Some(entry.v.clone())
         } else if let Some(entry) = self.round_cache.get_mut(k) {
             if entry.round != self.round {
                 entry.round = self.round;
                 entry.v.refresh();
             }
-            entry.v.clone()
+            Some(entry.v.clone())
         } else {
-            V::default()
+            None
         }
     }
 
