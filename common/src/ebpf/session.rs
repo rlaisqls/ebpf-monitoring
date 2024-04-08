@@ -415,8 +415,8 @@ impl Session<'_> {
     fn get_counts_map_values(&mut self) -> Result<(Vec<sample_key>, Vec<u32>, bool)> {
         let m = &self.bpf.maps().counts();
         let map_size  = m.info().unwrap().info.max_entries as usize;
-        let mut keys = Vec::with_capacity(map_size);
-        let mut values = Vec::with_capacity(map_size);
+        let mut keys: Vec<sample_key> = Vec::with_capacity(map_size);
+        let mut values: Vec<u32> = Vec::with_capacity(map_size);
         let mut count: u32 = 10;
         let mut nkey = 0u32;
         unsafe {
@@ -424,8 +424,8 @@ impl Session<'_> {
                 m.as_fd().as_raw_fd(),
                 std::ptr::null_mut(),
                 nkey as *mut _,
-                *keys.as_ptr(),
-                *values.as_ptr(),
+                keys.as_mut_ptr() as *mut c_void,
+                values.as_mut_ptr() as *mut c_void,
                 (&mut count) as *mut u32,
                 &bpf_map_batch_opts {
                     sz: 0,
@@ -690,16 +690,16 @@ impl Session<'_> {
         let m = &self.bpf.maps().pids();
         let map_size = m.info().unwrap().info.max_entries as usize;
         let mut nkey = 0u32;
-        let mut keys = Vec::with_capacity(map_size);
-        let mut values = Vec::with_capacity(map_size);
+        let mut keys: Vec<u32> = Vec::with_capacity(map_size);
+        let mut values: Vec<pid_config> = Vec::with_capacity(map_size);
         let mut count: u32 = 10;
         unsafe {
             let n = bpf_map_lookup_batch(
                 m.as_fd().as_raw_fd(),
                 std::ptr::null_mut(),
                 nkey as *mut _,
-                *keys.as_ptr(),
-                *values.as_ptr(),
+                keys.as_mut_ptr() as *mut c_void,
+                values.as_mut_ptr() as *mut c_void,
                 (&mut count) as *mut u32,
                 &bpf_map_batch_opts {
                     sz: 0,
