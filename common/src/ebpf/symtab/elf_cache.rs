@@ -8,7 +8,6 @@ use crate::ebpf::symtab::gcache::{debug_info, GCache, GCacheDebugInfo, GCacheOpt
 use crate::ebpf::symtab::stat::Stat;
 use crate::ebpf::symtab::symtab::SymbolNameResolver;
 
-#[derive(Eq, PartialEq, Clone)]
 pub struct ElfCache<'a> {
     build_id_cache: Mutex<GCache<BuildID, SymbolNameTable<'a>>>,
     same_file_cache: Mutex<GCache<Stat, SymbolNameTable<'a>>>,
@@ -21,7 +20,7 @@ impl<'a> ElfCache<'a> {
         Ok(Self { build_id_cache, same_file_cache })
     }
 
-    pub fn get_symbols_by_build_id(&self, build_id: &BuildID) -> Option<SymbolNameTable> {
+    pub fn get_symbols_by_build_id(&self, build_id: &BuildID) -> Option<Arc<SymbolNameTable>> {
         let res = self.build_id_cache.lock().unwrap().get(build_id).unwrap();
         if res.is_dead() {
             self.build_id_cache.lock().unwrap().remove(build_id);
@@ -34,7 +33,7 @@ impl<'a> ElfCache<'a> {
         self.build_id_cache.lock().unwrap().cache(build_id, v);
     }
 
-    pub fn get_symbols_by_stat(&self, s: Stat) -> Option<SymbolNameTable> {
+    pub fn get_symbols_by_stat(&self, s: Stat) -> Option<Arc<SymbolNameTable>> {
         let res = self.same_file_cache.lock().unwrap().get(&s);
         if res.is_none() {
             return None

@@ -1,4 +1,5 @@
 use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
+use crate::ebpf::symtab::gcache::Resource;
 use crate::ebpf::symtab::table::Symbol;
 
 pub trait SymbolTable {
@@ -13,6 +14,15 @@ pub trait SymbolNameResolver {
     fn debug_info(&self) -> SymTabDebugInfo;
     fn is_dead(&self) -> bool;
     fn resolve(&mut self, addr: u64) -> Option<String>;
+}
+
+impl Resource for dyn SymbolNameResolver {
+    fn refresh(&mut self) {
+        self.refresh()
+    }
+    fn cleanup(&mut self) {
+        self.cleanup()
+    }
 }
 
 #[derive(Eq, PartialEq, Ord, PartialOrd)]

@@ -28,9 +28,8 @@ pub struct ProcTableDebugInfo {
     pub(crate) last_used_round: i32,
 }
 
-#[derive(Eq, PartialEq, Ord, PartialOrd)]
 pub struct ElfRange<'a> {
-    map_range: ProcMap,
+    map_range: Arc<ProcMap>,
     elf_table: Option<ElfTable<'a>>,
 }
 
@@ -79,8 +78,8 @@ impl SymbolTable for ProcTable<'_> {
                 None => {
                     Some(&Symbol {
                         start: module_offset,
+                        name: "".to_string(),
                         module: r.map_range.pathname.clone(),
-                        ..Default::default()
                     })
                 }
             }
@@ -111,11 +110,11 @@ fn binary_search_func<S, E, T, F>(x: &[E], target: T, mut cmp: F) -> (usize, boo
     (i, i < x.len() && cmp(&x[i], &target) == std::cmp::Ordering::Equal)
 }
 
-fn binary_search_elf_range(e: &ElfRange, pc: u64) -> i32 {
-    if pc < e.map_range.start_addr {
+fn binary_search_elf_range(e: &ElfRange, pc: &u64) -> i32 {
+    if pc < &e.map_range.start_addr {
         return 1;
     }
-    if pc >= e.map_range.end_addr {
+    if pc >= &e.map_range.end_addr {
         return -1;
     }
     0
@@ -141,19 +140,23 @@ impl<'a> ProcTable<'a> {
         let path = format!("/proc/{}/maps", self.pid.to_string());
         match fs::read_to_string(&path) {
             Ok(proc_maps) => {
-                self.err = Some(self.refresh_proc_map(proc_maps).into());
+                match self.refresh_proc_map(proc_maps) {
+                    Err(e) => {
+                        self.err = Some(e);
+                    }
+                    _ => {}
+                }
             },
             Err(e) => {
-                self.err = Some(e.into());
+                self.err = Some(ProcError(e.to_string()));
             }
         }
     }
 
     fn cleanup(&mut self) {
-        let _ = self.file_to_table
+        self.file_to_table
             .iter_mut()
-            .map(|(_, table)| table.cleanup())
-            .collect();
+            .for_each(|(_, table)| table.cleanup())
     }
 
     fn refresh_proc_map(&mut self, proc_maps: String) -> Result<()> {
@@ -170,24 +173,19 @@ impl<'a> ProcTable<'a> {
         };
 
         for map in maps {
-            if let Some(_elf_table) = self.get_elf_table(map) {
+            if let Some(_elf_table) = self.get_elf_table(map.clone()) {
                 files_to_keep.insert(map.file(), ());
                 self.ranges.push(Arc::new(ElfRange {
-                    map_range: map.clone(),
+                    map_range: map,
                     elf_table: None,
                 }));
             }
         }
 
-        let files_to_delete: Vec<File> = self
-            .file_to_table
+        self.file_to_table
             .keys()
             .filter(|f| !files_to_keep.contains_key(*f))
-            .collect();
-
-        for file in files_to_delete {
-            self.file_to_table.remove(&file);
-        }
+            .for_each(|f| { self.file_to_table.remove(&f); return () });
         Ok(())
     }
 
@@ -207,19 +205,19 @@ impl<'a> ProcTable<'a> {
         res
     }
 
-    fn get_elf_table(&mut self, r: ProcMap) -> Option<&mut ElfTable> {
-        let f = r.file();
+    fn get_elf_table(&mut self, r: Arc<ProcMap>) -> Option<&mut ElfTable> {
+        let f = r.clone().file();
         if let Some(e) = self.file_to_table.get_mut(&f) {
             Some(e)
         } else {
             if let Some(e) = self.create_elf_table(r) {
                 self.file_to_table.insert(f, e);
             }
-            self.file_to_table.get_mut(&f)
+            self.file_to_table.get_mut(&r.clone().file())
         }
     }
 
-    fn create_elf_table(&self, m: ProcMap) -> Option<ElfTable> {
+    fn create_elf_table(&self, m: Arc<ProcMap>) -> Option<ElfTable> {
         if !m.pathname.starts_with('/') {
             return None;
         }
@@ -231,13 +229,7 @@ impl<'a> ProcTable<'a> {
     }
 }
 
-impl FromIterator<&File> for Vec<File> {
-    fn from_iter<I: for<'a> IntoIterator<Item = &File>>(iter: I) -> Self {
-        iter.into_iter().map(|&f| f.clone()).collect()
-    }
-}
-
-fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool) -> Result<Vec<ProcMap>> {
+pub fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool) -> Result<Vec<Arc<ProcMap>>> {
     let mut modules = Vec::new();
     let mut remaining = proc_maps;
     while !remaining.is_empty() {
@@ -248,7 +240,7 @@ fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool) ->
             continue;
         }
         if let Some(module) = parse_proc_map_line(line, executable_only).unwrap() {
-            modules.push(module);
+            modules.push(Arc::new(module));
         }
     }
     Ok(modules)

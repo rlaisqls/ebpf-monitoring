@@ -21,7 +21,7 @@ use log::{debug, error, info};
 use prometheus::opts;
 
 use profile::*;
-use crate::common::collector::{ProfileSample, SamplesCollector, SampleType};
+use crate::common::collector::{CollectProfilesCallback, ProfileSample, SamplesCollector, SampleType};
 
 use crate::ebpf::cpuonline;
 use crate::ebpf::metrics::metrics::Metrics;
@@ -112,12 +112,13 @@ pub struct Session<'a> {
 }
 
 impl SamplesCollector for Session<'_> {
-    fn collect_profiles<F>(&mut self, callback: F) -> Result<()> where F: FnMut(ProfileSample) {
+
+    fn collect_profiles(&mut self, callback: CollectProfilesCallback) -> Result<()> {
         let _guard = self.mutex.lock().unwrap();
         self.sym_cache.next_round();
         self.round_number += 1;
 
-        self.collect_regular_profile(callback);
+        self.collect_regular_profile(callback).unwrap();
         self.cleanup();
 
         Ok(())
@@ -248,7 +249,7 @@ impl Session<'_> {
         };
 
         if let Err(err) = self.bpf.maps().pids()
-            .update(&*pid.to_ne_bytes(), any_as_u8_slice(&config), MapFlags::ANY)
+            .update(&pid.to_ne_bytes(), any_as_u8_slice(&config), MapFlags::ANY)
         {
             let _ = error!("updating pids map err: {:?}", err);
         }
@@ -299,8 +300,8 @@ impl Session<'_> {
                         }
 
                         let mut e = pid_event {
-                            op: u32::from_le_bytes(&*record.raw_sample[0..4]),
-                            pid: u32::from_le_bytes(&*record.raw_sample[4..8])
+                            op: u32::from_le_bytes([record.raw_sample[0], record.raw_sample[1], record.raw_sample[2], record.raw_sample[3]]),
+                            pid: u32::from_le_bytes([record.raw_sample[4], record.raw_sample[5], record.raw_sample[6], record.raw_sample[7]])
                         };
                         if e.op == PidOp::RequestExecProcessInfo as u32 {
                             match pid_config_request.send(e.pid) {
@@ -394,8 +395,8 @@ impl Session<'_> {
         };
         let hooks = [
             ("disassociate_ctty", &self.bpf.progs().disassociate_ctty(), true),
-            (format!("{}{}", arch_sys, "sys_execve"), &self.bpf.progs().exec(), false),
-            (format!("{}{}", arch_sys, "sys_execveat"), &self.bpf.progs().exec(), false),
+            (format!("{}{}", arch_sys, "sys_execve").as_str(), &self.bpf.progs().exec(), false),
+            (format!("{}{}", arch_sys, "sys_execveat").as_str(), &self.bpf.progs().exec(), false),
         ];
         for (kprobe, mut prog, required) in &hooks {
             match prog.attach_kprobe(false, prog.name()) {
@@ -501,7 +502,7 @@ impl Session<'_> {
         }
 
         for stack_id in known_keys.keys() {
-            if let Err(_e) = m.delete(stack_id) {
+            if let Err(_e) = m.delete(stack_id.to_le_bytes()) {
                 errs += 1;
             } else {
                 cnt += 1;
@@ -512,13 +513,13 @@ impl Session<'_> {
     }
 
     pub fn debug_info(&self) -> SessionDebugInfo {
-        SessionDebugInfo {
+        SessionDebugInfo
             elf_cache: self.sym_cache.elf_cache_debug_info(),
             pid_cache: self.sym_cache.pid_cache_debug_info()
         }
     }
 
-    fn collect_regular_profile<F>(&mut self, cb: F) where F: FnMut(ProfileSample) -> Result<()> {
+    fn collect_regular_profile(&mut self, cb: CollectProfilesCallback) -> Result<()> {
         let mut sb = StackBuilder::new();
         let mut known_stacks: HashMap<u32, bool> = HashMap::new();
         let (keys, values, batch) = self.get_counts_map_values().unwrap();
@@ -557,7 +558,7 @@ impl Session<'_> {
                             stack: sb.stack.clone(),
                             value: value as u64,
                             value2: 0,
-                        }).unwrap();
+                        });
                         self.collect_metrics(&labels, &stats, &sb);
                     }
                 } else {
@@ -566,7 +567,7 @@ impl Session<'_> {
             }
         }
         self.clear_counts_map(&keys, batch).unwrap();
-        self.clear_stacks_map(&known_stacks).unwrap();
+        Ok(self.clear_stacks_map(&known_stacks).unwrap())
     }
 
     fn comm(&self, pid: u32) -> String {
@@ -582,7 +583,6 @@ impl Session<'_> {
         if stack.is_empty() {
             return;
         }
-
         let mut stack_frames = Vec::new();
         for i in 0..127 {
             let start = i * 8;
@@ -628,7 +628,7 @@ impl Session<'_> {
         }
         let stack_id_u32 = stack_id as u32;
         self.bpf.maps().stacks()
-            .lookup(&*stack_id_u32.to_le_bytes(), MapFlags::ANY)
+            .lookup(stack_id_u32.to_le_bytes(), MapFlags::ANY)
             .unwrap_or_else(|_| None)
     }
 
@@ -712,15 +712,15 @@ impl Session<'_> {
                 if let Err(err) = fs::metadata(format!("/proc/{}/status", keys[i as usize] as __u32)) {
                     if err.kind() == std::io::ErrorKind::NotFound {
                         if let Err(del_err) = m.delete(keys[i]) {
-                            error!("delete stale pid pid: {}, err: {}", keys[i], del_err);
+                            error!("delete stale pid pid");
                         } else {
-                            dbg!("stale pid deleted pid: {}", keys[i]);
+                            dbg!("stale pid deleted pid");
                         }
                     } else {
                         error!("check stale pids err: {}", err);
                     }
                 } else {
-                    dbg!("stale pid check : alive pid: {}, config: {:?}", keys[i], values[i]);
+                    dbg!("stale pid check : alive, config: {:?}", values[i]);
                 }
             }
         }

@@ -64,9 +64,9 @@ pub struct Reader {
     // Closing a PERF_EVENT_ARRAY removes all event fds
     // stored in it, so we keep a reference alive.
     array: MapHandle,
-    rings: Vec<PerfEventRing>,
+    rings: Vec<Arc<PerfEventRing>>,
     epoll_events: polling::Events,
-    epoll_rings: Vec<PerfEventRing>,
+    epoll_rings: Vec<Arc<PerfEventRing>>,
     event_header: Vec<u8>,
 
     pause_mu: Arc<Mutex<()>>,
@@ -94,7 +94,7 @@ impl Reader {
             buffer_size = ring.size();
 
             let fd = ring.fd;
-            rings.push(ring);
+            rings.push(Arc::new(ring));
             pause_fds.push(fd);
             unsafe {
                 poller.add(fd, polling::Event::all(i)).unwrap();
@@ -159,13 +159,13 @@ impl Reader {
                 }
 
                 for event in self.epoll_events.iter() {
-                    let ring = self.rings[event.key].clone();
+                    let mut ring = self.rings[event.key].clone();
                     self.epoll_rings.push(ring);
 
                     // Read the current head pointer now, not every time
                     // we read a record. This prevents a single fast producer
                     // from keeping the reader busy.
-                    ring.load_head().unwrap();
+                    ring.load_head();
                 }
             }
 

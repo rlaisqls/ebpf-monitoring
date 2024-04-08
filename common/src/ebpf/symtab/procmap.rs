@@ -93,17 +93,6 @@ fn parse_proc_map_line(line: &str, executable_only: bool) -> Result<Option<ProcM
     }))
 }
 
-fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool) -> Result<Vec<ProcMap>, &'static str> {
-    let mut modules = Vec::new();
-    for line in proc_maps.lines() {
-        if let Some(proc_map) = parse_proc_map_line(line, executable_only).unwrap() {
-            modules.push(proc_map);
-        }
-    }
-    Ok(modules)
-}
-
-
 fn parse_permissions(s: &str) -> Option<ProcMapPermissions> {
     if s.len() < 4 {
         return None;

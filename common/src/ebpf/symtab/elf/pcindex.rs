@@ -1,6 +1,6 @@
 use std::convert::From;
 
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
+
 pub struct PCIndex {
     i32: Option<Vec<u32>>,
     i64: Option<Vec<u64>>,

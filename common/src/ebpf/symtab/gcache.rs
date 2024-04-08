@@ -14,7 +14,6 @@ pub trait Resource {
     fn cleanup(&mut self);
 }
 
-#[derive(Eq, PartialEq)]
 pub struct GCache<K: Eq + Hash + Clone, V: Resource> {
     options: GCacheOptions,
     round_cache: HashMap<K, Arc<Entry<V>>>,
@@ -35,7 +34,7 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
         self.round += 1;
     }
 
-    pub fn get(&mut self, k: &K) -> Option<V> {
+    pub fn get(&mut self, k: &K) -> Option<Arc<V>> {
         if let Some(entry) = self.lru_cache.get_mut(k) {
             if entry.round != self.round {
                 entry.round = self.round;

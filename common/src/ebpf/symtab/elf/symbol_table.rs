@@ -7,16 +7,16 @@ use crate::ebpf::symtab::symtab::SymbolNameResolver;
 use crate::ebpf::symtab::gcache::Resource;
 use crate::error::{Error::NotFound, Result};
 
-#[derive(PartialOrd, Eq, PartialEq, Ord, Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SymbolIndex {
     pub(crate) name: Name,
     pub(crate) value: u64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct SectionLinkIndex(u8);
 
-#[derive(PartialOrd, Ord, PartialEq, Eq, Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Name(pub(crate) u32);
 
 pub(crate) const SECTION_TYPE_SYM: SectionLinkIndex = SectionLinkIndex(0);
@@ -34,14 +34,12 @@ impl Name {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FlatSymbolIndex {
     pub(crate) links: Vec<SectionHeader>,
     pub(crate) names: Vec<Name>,
     pub(crate) values: PCIndex
 }
 
-#[derive(Debug, Eq, Ord, PartialOrd, PartialEq)]
 pub struct SymbolNameTable<'a> {
     pub(crate) index: FlatSymbolIndex,
     pub(crate) file: MappedElfFile<'a>
@@ -63,7 +61,7 @@ impl SymbolNameResolver for SymbolNameTable<'_> {
 
     fn debug_info(&self) -> SymTabDebugInfo {
         SymTabDebugInfo {
-            name: format!("SymbolTable {:?}", self),
+            name: format!("SymbolTable"), // add debug info
             size: self.index.names.len(),
             file: self.file.fpath.clone().to_str().unwrap().to_string(),
             last_used_round: 0,

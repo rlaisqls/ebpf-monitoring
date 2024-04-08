@@ -37,7 +37,6 @@ impl Default for SymbolOptions {
     }
 }
 
-#[derive(Eq, PartialEq, PartialOrd, Ord)]
 pub struct ElfTable<'a> {
     fs: String,
     pub(crate) table: Arc<dyn SymbolNameResolver>,
@@ -45,12 +44,12 @@ pub struct ElfTable<'a> {
     loaded: bool,
     loaded_cached: bool,
     options: ElfTableOptions<'a>,
-    proc_map: ProcMap,
+    proc_map: Arc<ProcMap>,
     err: Option<crate::error::Error>
 }
 
 impl ElfTable<'_> {
-    pub fn new(proc_map: ProcMap, fs: String, options: ElfTableOptions) -> Self {
+    pub fn new(proc_map: Arc<ProcMap>, fs: String, options: ElfTableOptions) -> Self {
         Self {
             fs,
             table: Arc::new(NoopSymbolNameResolver {}),
@@ -93,7 +92,7 @@ impl ElfTable<'_> {
         };
 
         if let Some(symbols) = self.options.elf_cache.get_symbols_by_build_id(&build_id) {
-            self.table = Arc::new(symbols);
+            self.table = symbols;
             self.loaded_cached = true;
             return;
         }
@@ -107,7 +106,7 @@ impl ElfTable<'_> {
         };
 
         if let Some(symbols) = self.options.elf_cache.get_symbols_by_stat(stat_from_file_info(&file_info)) {
-            self.table = Arc::new(symbols);
+            self.table = symbols;
             self.loaded_cached = true;
             return;
         }
@@ -258,7 +257,7 @@ impl ElfTable<'_> {
             return None;
         }
 
-        self.table = Box::new(NoopSymbolNameResolver {});
+        self.table = Arc::new(NoopSymbolNameResolver {});
         self.loaded = false;
         self.loaded_cached = false;
         self.load();

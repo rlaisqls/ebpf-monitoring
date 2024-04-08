@@ -1,7 +1,7 @@
 use crate::ebpf::pprof::ProfileBuilders;
 use crate::ebpf::sd::target::Target;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SampleType {
     Cpu = 0,
     Mem = 1,
@@ -21,13 +21,12 @@ pub const SAMPLE_TYPE_CPU: SampleType = SampleType::Cpu;
 pub const SAMPLE_TYPE_MEM: SampleType = SampleType::Mem;
 
 pub trait SamplesCollector {
-    fn collect_profiles<F>(&mut self, callback: F) -> crate::error::Result<()>
-        where F: FnMut(ProfileSample);
+    fn collect_profiles(&mut self, callback: CollectProfilesCallback) -> crate::error::Result<()>;
 }
-type CollectProfilesCallback = fn(ProfileSample);
+pub type CollectProfilesCallback = fn(ProfileSample);
 
 pub fn collect(builders: &mut ProfileBuilders, collector: &mut dyn SamplesCollector) -> crate::error::Result<()> {
-    collector.collect_profiles(|sample| {
+    collector.collect_profiles(|sample: ProfileSample| {
         builders.add_sample(sample);
     })
 }
