@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use log::error;
 use tokio::time::interval;
+use common::common::collector::collect;
 use common::ebpf::pprof;
 use common::ebpf::pprof::BuildersOptions;
 use common::ebpf::sd::target::{LABEL_CONTAINER_ID, LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
@@ -105,11 +106,11 @@ impl EbpfLinuxComponent {
         })
     }
 
-    async fn collect_profiles(&self) -> Result<()> {
+    async fn collect_profiles(&mut self) -> Result<()> {
         let mut builders = pprof::ProfileBuilders::new(
             BuildersOptions { sample_rate: 1000, per_pid_profile: false }
         );
-        pprof::collect(&mut builders, &self.session).await.unwrap();
+        collect(&mut builders, &mut self.session).await.unwrap();
 
         for (_, builder) in builders.builders {
             let service_name = builder.labels.get(LABEL_SERVICE_NAME).unwrap().trim();

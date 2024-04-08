@@ -21,6 +21,7 @@ use log::{debug, error, info};
 use prometheus::opts;
 
 use profile::*;
+use crate::common::collector::{ProfileSample, SamplesCollector, SampleType};
 
 use crate::ebpf::cpuonline;
 use crate::ebpf::metrics::metrics::Metrics;
@@ -43,8 +44,6 @@ use crate::error::Result;
 mod profile {
     include!("bpf/profile.skel.rs");
 }
-
-type CollectProfilesCallback = Box<dyn Fn(Target, Vec<String>, u64, u32, bool) + Send + 'static>;
 
 #[derive(Clone)]
 pub struct SessionOptions {
@@ -110,6 +109,19 @@ pub struct Session<'a> {
 
     pids: Pids,
     perf_events: Vec<PerfEvent>
+}
+
+impl SamplesCollector for Session<'_> {
+    fn collect_profiles<F>(&mut self, callback: F) -> Result<()> where F: FnMut(ProfileSample) {
+        let _guard = self.mutex.lock().unwrap();
+        self.sym_cache.next_round();
+        self.round_number += 1;
+
+        self.collect_regular_profile(callback);
+        self.cleanup();
+
+        Ok(())
+    }
 }
 
 impl Session<'_> {
@@ -499,17 +511,6 @@ impl Session<'_> {
         Ok(())
     }
 
-    fn collect_profiles(&mut self, cb: CollectProfilesCallback) -> Result<()> {
-        let _guard = self.mutex.lock().unwrap();
-        self.sym_cache.next_round();
-        self.round_number += 1;
-
-        self.collect_regular_profile(cb)?;
-        self.cleanup();
-
-        Ok(())
-    }
-
     pub fn debug_info(&self) -> SessionDebugInfo {
         SessionDebugInfo {
             elf_cache: self.sym_cache.elf_cache_debug_info(),
@@ -517,7 +518,7 @@ impl Session<'_> {
         }
     }
 
-    fn collect_regular_profile(&mut self, cb: CollectProfilesCallback) -> Result<()> {
+    fn collect_regular_profile<F>(&mut self, cb: F) where F: FnMut(ProfileSample) -> Result<()> {
         let mut sb = StackBuilder::new();
         let mut known_stacks: HashMap<u32, bool> = HashMap::new();
         let (keys, values, batch) = self.get_counts_map_values().unwrap();
@@ -548,7 +549,15 @@ impl Session<'_> {
                         self.walk_stack(&mut sb, &k_stack, &mut self.sym_cache.get_kallsyms(), &mut stats);
                     }
                     if sb.stack.len() > 1 {
-                        cb(labels, sb.stack.clone(), value as u64, ck.pid, true);
+                        cb(ProfileSample{
+                            target: &labels,
+                            pid: ck.pid,
+                            sample_type: SampleType::Cpu,
+                            aggregation: true,
+                            stack: sb.stack.clone(),
+                            value: value as u64,
+                            value2: 0,
+                        }).unwrap();
                         self.collect_metrics(&labels, &stats, &sb);
                     }
                 } else {
@@ -558,8 +567,6 @@ impl Session<'_> {
         }
         self.clear_counts_map(&keys, batch).unwrap();
         self.clear_stacks_map(&known_stacks).unwrap();
-
-        Ok(())
     }
 
     fn comm(&self, pid: u32) -> String {

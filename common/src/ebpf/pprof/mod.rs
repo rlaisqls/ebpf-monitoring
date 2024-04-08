@@ -7,45 +7,15 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use prost::Message;
 
+use crate::common::collector::{ProfileSample, SAMPLE_TYPE_CPU, SampleType};
 use crate::common::labels::Labels;
 use crate::ebpf::pprof::pprof::PProfBuilder;
 use crate::ebpf::pprof::profiles::{Function, Line, Location, Profile, Sample, ValueType};
-use crate::ebpf::sd::target::Target;
-use crate::error::Result;
 
 mod profiles;
 mod pprof;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SampleType {
-    Cpu = 0,
-    Mem = 1,
-}
 
-const SAMPLE_TYPE_CPU: SampleType = SampleType::Cpu;
-const SAMPLE_TYPE_MEM: SampleType = SampleType::Mem;
-
-trait SamplesCollector {
-    fn collect_profiles(&self, callback: CollectProfilesCallback) -> Result<(), String>;
-}
-
-struct ProfileSample<'a> {
-    target: &'a Target,
-    pid: u32,
-    sample_type: SampleType,
-    aggregation: bool,
-    stack: Vec<String>,
-    value: u64,
-    value2: u64,
-}
-
-type CollectProfilesCallback = fn(ProfileSample);
-
-pub fn collect(builders: &mut ProfileBuilders, collector: &dyn SamplesCollector) -> Result<(), String> {
-    collector.collect_profiles(|sample| {
-        builders.add_sample(sample);
-    })
-}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct BuildersOptions {
@@ -73,7 +43,7 @@ impl ProfileBuilders {
         }
     }
 
-    fn add_sample(&mut self, sample: ProfileSample) {
+    pub(crate) fn add_sample(&mut self, sample: ProfileSample) {
         let bb = self.builder_for_sample(&sample);
         bb.create_sample(sample);
     }
@@ -226,7 +196,7 @@ impl ProfileBuilder {
 
     fn add_value(&self, input_sample: &ProfileSample, sample: &mut Sample) {
         if input_sample.sample_type == SampleType::Cpu {
-            sample.value[0] += input_sample.value * self.profile.period;
+            sample.value[0] += (input_sample.value as i64) * self.profile.period;
         } else {
             sample.value[0] += input_sample.value as i64;
             sample.value[1] += input_sample.value2 as i64;
