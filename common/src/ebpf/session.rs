@@ -21,8 +21,8 @@ use log::{debug, error, info};
 use prometheus::opts;
 
 use profile::*;
-use crate::common::collector::{ProfileSample, SamplesCollector, SampleType};
 
+use crate::common::collector::{ProfileSample, SamplesCollector, SampleType};
 use crate::ebpf::cpuonline;
 use crate::ebpf::metrics::metrics::Metrics;
 use crate::ebpf::metrics::symtab::SymtabMetrics;
@@ -182,18 +182,7 @@ impl Session<'_> {
         self.wg.add(4);
 
         self.started = true;
-        thread::spawn(move || {
-            self.read_events(pid_info_request_tx, pid_exec_request_tx, dead_pid_events_tx)
-        });
-        thread::spawn(move || {
-            self.process_pid_info_requests()
-        });
-        thread::spawn(move || {
-            self.process_dead_pids_events()
-        });
-        thread::spawn(move || {
-            self.process_pid_exec_requests()
-        });
+        self.read_events(/*pid_info_request_tx, pid_exec_request_tx, dead_pid_events_tx*/);
         Ok(())
     }
 
@@ -277,12 +266,7 @@ impl Session<'_> {
         ProcInfoLite { pid, comm: String::new(), typ: ProfilingType::TypeError }
     }
 
-    fn read_events(
-        &mut self,
-        pid_config_request: Sender<u32>,
-        pid_exec_request: Sender<u32>,
-        dead_pids_events: Sender<u32>,
-    ) {
+    fn read_events(&mut self) {
         loop {
             match self.events_reader.take().unwrap().read() {
                 Ok(record) => {
@@ -304,21 +288,21 @@ impl Session<'_> {
                             pid: u32::from_le_bytes([record.raw_sample[4], record.raw_sample[5], record.raw_sample[6], record.raw_sample[7]])
                         };
                         if e.op == PidOp::RequestExecProcessInfo as u32 {
-                            match pid_config_request.send(e.pid) {
+                            match self.process_pid_info_requests(e.pid) {
                                 Ok(_) => {}
                                 Err(_) => {
                                     error!("pid info request queue full, dropping request: {}", e.pid);
                                 }
                             }
                         } else if e.op == Dead as u32 {
-                            match dead_pids_events.send(e.pid) {
+                            match self.process_dead_pids_events(e.pid) {
                                 Ok(_) => {}
                                 Err(_) => {
                                     error!("dead pid info queue full, dropping event: {}", e.pid);
                                 }
                             }
                         } else if e.op == PidOp::RequestExecProcessInfo as u32 {
-                            match pid_exec_request.send(e.pid) {
+                            match self.process_pid_exec_requests(e.pid) {
                                 Ok(_) => {}
                                 Err(_) => {
                                     error!("pid exec request queue full, dropping event: {}", e.pid);
@@ -336,55 +320,50 @@ impl Session<'_> {
         }
     }
 
-    fn process_pid_info_requests(&mut self) {
-        for pid in self.pid_info_requests.take().unwrap() {
-            let target = self.target_finder.find_target(&pid);
-            debug!("pid info request: pid={}, target={:?}", pid, target);
+    fn process_pid_info_requests(&mut self, pid: u32) -> Result<()> {
+        let target = self.target_finder.find_target(&pid);
+        debug!("pid info request: pid={}, target={:?}", pid, target);
 
-            let already_dead = self.pids.dead.contains_key(&pid);
-            if already_dead {
-                debug!("pid info request for dead pid: {}", pid);
-                continue;
-            }
-
-            if target.is_none() {
-                self.save_unknown_pid_locked(&pid);
-            } else {
-                self.start_profiling_locked(&pid, target.unwrap());
-            }
+        let already_dead = self.pids.dead.contains_key(&pid);
+        if already_dead {
+            debug!("pid info request for dead pid: {}", pid);
+            return Ok(());
         }
+
+        if target.is_none() {
+            self.save_unknown_pid_locked(&pid);
+        } else {
+            self.start_profiling_locked(&pid, target.unwrap());
+        }
+        Ok(())
     }
 
     fn save_unknown_pid_locked(&mut self, pid: &u32) {
         self.pids.unknown.insert(pid.clone(), ());
     }
     
-    fn process_dead_pids_events(&mut self) {
-        for pid in self.dead_pid_events.take().unwrap() {
-            debug!("pid dead: {}", pid);
-            {
-                self.pids.dead.insert(pid, Default::default());
-            }
-        }
+    fn process_dead_pids_events(&mut self, pid: u32) -> Result<()> {
+        debug!("pid dead: {}", pid);
+        self.pids.dead.insert(pid, Default::default());
+        return Ok(())
     }
 
-    fn process_pid_exec_requests(&mut self) {
-        for pid in self.dead_pid_events.take().unwrap() {
-            let target = self.target_finder.find_target(&pid);
-            info!("pid exec request: {}", pid);
-            {
-                let _ = self.mutex.lock().unwrap();
-                if self.pids.dead.contains_key(&pid) {
-                    info!("pid exec request for dead pid: {}", pid);
-                    continue;
-                }
-                if target.is_none() {
-                    self.save_unknown_pid_locked(&pid);
-                } else {
-                    self.start_profiling_locked(&pid, target.unwrap());
-                }
+    fn process_pid_exec_requests(&mut self, pid: u32) -> Result<()> {
+        let target = self.target_finder.find_target(&pid);
+        info!("pid exec request: {}", pid);
+        {
+            let _ = self.mutex.lock().unwrap();
+            if self.pids.dead.contains_key(&pid) {
+                info!("pid exec request for dead pid: {}", pid);
+                return Ok(());
+            }
+            if target.is_none() {
+                self.save_unknown_pid_locked(&pid);
+            } else {
+                self.start_profiling_locked(&pid, target.unwrap());
             }
         }
+        Ok(())
     }
 
     fn link_kprobes(&mut self) -> Result<(), String> {
