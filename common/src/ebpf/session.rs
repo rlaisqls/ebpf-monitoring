@@ -2,6 +2,7 @@ use std::{collections::HashMap, fs, sync::{Arc, Mutex}, thread};
 use std::any::Any;
 use std::borrow::Borrow;
 use std::borrow::BorrowMut;
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
@@ -85,7 +86,7 @@ pub struct SessionDebugInfo {
 }
 
 pub struct Session<'a> {
-    pub target_finder: Arc<TargetFinder>,
+    pub target_finder: Arc<Cell<TargetFinder>>,
     sym_cache: Arc<SymbolCache<'a>>,
     bpf: ProfileSkel<'a>,
 
@@ -126,7 +127,7 @@ impl SamplesCollector for Session<'_> {
 }
 
 impl Session<'_> {
-    pub fn new(target_finder: Arc<TargetFinder>, opts: SessionOptions) -> Result<Self> {
+    pub fn new(target_finder: Arc<Cell<TargetFinder>>, opts: SessionOptions) -> Result<Self> {
         let sym_cache = SymbolCache::new(opts.cache_options, &opts.metrics.symtab).unwrap();
         bump_memlock_rlimit().unwrap();
         let mut open_skel = ProfileSkelBuilder::default().open().unwrap();
@@ -204,9 +205,9 @@ impl Session<'_> {
     }
 
     pub fn update_targets(&mut self, args: TargetsOptions) {
-        self.target_finder.update(args);
+        self.target_finder.get_mut().update(args);
         for pid in self.pids.unknown.iter_mut() {
-            let target = self.target_finder.find_target(pid.0);
+            let target = self.target_finder.get_mut().find_target(pid.0);
             if let Some(target) = target {
                 self.start_profiling_locked(pid.0, target);
                 self.pids.unknown.remove(pid.0);
@@ -318,7 +319,7 @@ impl Session<'_> {
     }
 
     fn process_pid_info_requests(&mut self, pid: u32) -> Result<()> {
-        let target = self.target_finder.find_target(&pid);
+        let target = self.target_finder.get_mut().find_target(&pid);
         debug!("pid info request: pid={}, target={:?}", pid, target);
 
         let already_dead = self.pids.dead.contains_key(&pid);
@@ -346,7 +347,7 @@ impl Session<'_> {
     }
 
     fn process_pid_exec_requests(&mut self, pid: u32) -> Result<()> {
-        let target = self.target_finder.find_target(&pid);
+        let target = self.target_finder.get_mut().find_target(&pid);
         info!("pid exec request: {}", pid);
         {
             let _ = self.mutex.lock().unwrap();
@@ -515,7 +516,7 @@ impl Session<'_> {
             if ck.kern_stack >= 0 {
                 known_stacks.insert(ck.kern_stack as u32, true);
             }
-            if let Some(labels) = self.target_finder.find_target(&ck.pid) {
+            if let Some(labels) = self.target_finder.get_mut().find_target(&ck.pid) {
                 if self.pids.dead.contains_key(&ck.pid) {
                     continue;
                 }
@@ -644,7 +645,7 @@ impl Session<'_> {
             self.pids.all.remove(pid);
             self.sym_cache.remove_dead_pid(pid);
             self.bpf.maps().pids().delete(&pid.to_le_bytes()).unwrap();
-            self.target_finder.remove_dead_pid(pid);
+            self.target_finder.get_mut().remove_dead_pid(pid);
         }
 
         let mut unknown_pids_to_remove = HashSet::new();

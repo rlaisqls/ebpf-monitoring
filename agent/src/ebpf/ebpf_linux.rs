@@ -2,6 +2,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
 use log::error;
@@ -89,10 +90,10 @@ impl Component for EbpfLinuxComponent {
 
 impl EbpfLinuxComponent {
     pub async fn new(opts: Options, args: Arguments) -> Result<Self> {
-        let target_finder = Arc::new(TargetFinder::new(
+        let target_finder = Arc::new(Cell::new(TargetFinder::new(
             1024,
             File::open("/").unwrap()
-        ));
+        )));
         let ms = metrics::new(opts.registerer.borrow());
         let session = Session::new(target_finder, convert_session_options(&args)).unwrap();
 
