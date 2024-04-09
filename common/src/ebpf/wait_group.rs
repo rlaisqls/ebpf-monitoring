@@ -16,12 +16,10 @@ impl WaitGroup {
     }
 
     pub(crate) fn add(&mut self, delta: usize) {
-        let _guard = self.mutex.lock().unwrap();
         self.count += delta;
     }
 
     pub(crate) fn done(&self) {
-        let _guard = self.mutex.lock().unwrap();
         if self.count == 0 {
             panic!("negative WaitGroup counter")
         }

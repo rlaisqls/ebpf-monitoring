@@ -114,7 +114,6 @@ pub struct Session<'a> {
 impl SamplesCollector for Session<'_> {
 
     fn collect_profiles<F>(&mut self, callback: F) -> Result<()> where F: Fn(ProfileSample) {
-        let _guard = self.mutex.lock().unwrap();
         self.sym_cache.next_round();
         self.round_number += 1;
 
@@ -153,7 +152,6 @@ impl Session<'_> {
 
     fn start(&mut self) -> Result<()> {
 
-        let _guard = self.mutex.lock().unwrap();
         bump_memlock_rlimit().expect(&*"Failed to increase rlimit");
 
         self.bpf.attach().unwrap();
@@ -200,14 +198,12 @@ impl Session<'_> {
     }
 
     fn update(&mut self, options: SessionOptions) -> Result<(), String> {
-        let _guard = self.mutex.lock().unwrap();
         self.options = options;
         Ok(())
     }
 
     pub fn update_targets(&mut self, args: TargetsOptions) {
         self.target_finder.update(args);
-        let _guard = self.mutex.lock().unwrap();
         for pid in self.pids.unknown.iter() {
             let target = self.target_finder.find_target(pid.0);
             if let Some(target) = target {
@@ -372,10 +368,11 @@ impl Session<'_> {
         } else {
             "__arm64_"
         };
+        let binding = self.bpf.progs();
         let hooks = [
             ("disassociate_ctty", &self.bpf.progs().disassociate_ctty(), true),
-            (format!("{}{}", arch_sys, "sys_execve").as_str(), &self.bpf.progs().exec(), false),
-            (format!("{}{}", arch_sys, "sys_execveat").as_str(), &self.bpf.progs().exec(), false),
+            (format!("{}{}", arch_sys, "sys_execve").as_str(), &binding.exec(), false),
+            (format!("{}{}", arch_sys, "sys_execveat").as_str(), &binding.exec(), false),
         ];
         for (kprobe, mut prog, required) in &hooks {
             match prog.attach_kprobe(false, prog.name()) {
