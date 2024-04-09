@@ -166,11 +166,11 @@ impl TargetFinder {
 
         for target in &opts.targets {
             if let Some(pid) = pid_from_target(target) {
-                let t = Target::new("".to_string(), pid, target.clone());
+                let t = Target::new("".to_string(), pid.clone(), target.clone());
                 pid2_target.insert(pid, t);
             } else if let Some(cid) = container_id_from_target(target) {
-                let t = Target::new(cid, 0, target.clone());
-                container_id2_target.insert(cid.clone(), t);
+                let t = Target::new(cid.clone(), 0, target.clone());
+                container_id2_target.insert(cid, t);
             }
         }
 
@@ -198,8 +198,8 @@ impl TargetFinder {
     pub fn debug_info(&mut self) -> Vec<String> {
         self.cid2target.clone()
             .iter_mut()
-            .map(|(_, &mut target)| {
-                let (key, value) = target.labels();
+            .map(|(_, &mut ref target)| {
+                let (key, value) = target.clone().labels();
                 format!("{}: {}", key, value)
             })
             .collect()

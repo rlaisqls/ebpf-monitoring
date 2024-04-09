@@ -92,7 +92,7 @@ impl ElfTable<'_> {
         };
 
         if let Some(symbols) = self.options.elf_cache.get_symbols_by_build_id(&build_id) {
-            self.table = symbols;
+            self.table = symbols.clone();
             self.loaded_cached = true;
             return;
         }
@@ -106,7 +106,7 @@ impl ElfTable<'_> {
         };
 
         if let Some(symbols) = self.options.elf_cache.get_symbols_by_stat(stat_from_file_info(&file_info)) {
-            self.table = symbols;
+            self.table = symbols.clone();
             self.loaded_cached = true;
             return;
         }
@@ -141,7 +141,7 @@ impl ElfTable<'_> {
             }
         });
 
-        self.table = symbols;
+        self.table = symbols.clone();
         if build_id.is_empty() {
             self.options.elf_cache.cache_by_stat(stat_from_file_info(&file_info), symbols.clone());
         } else {

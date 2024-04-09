@@ -214,7 +214,7 @@ impl<'a> ProcTable<'a> {
         if let Some(e) = self.file_to_table.get_mut(&f) {
             Some(e)
         } else {
-            if let Some(e) = self.create_elf_table(r) {
+            if let Some(e) = self.create_elf_table(r.clone()) {
                 self.file_to_table.insert(f, e);
             }
             self.file_to_table.get_mut(&r.clone().file())

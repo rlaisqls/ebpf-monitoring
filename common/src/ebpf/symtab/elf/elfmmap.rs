@@ -145,7 +145,7 @@ impl MappedElfFile<'_> {
                 //     continue;
                 // }
                 symbols.push(SymbolIndex {
-                    name: Name::new(name, link_index),
+                    name: Name::new(name, link_index.clone()),
                     value: pc,
                 });
                 i += 1;
@@ -188,7 +188,7 @@ impl MappedElfFile<'_> {
                 //     continue;
                 // }
                 symbols.push(SymbolIndex {
-                    name: Name::new(name, link_index),
+                    name: Name::new(name, link_index.clone()),
                     value: pc,
                 });
                 i += 1;

@@ -54,7 +54,7 @@ impl Labels {
     }
     pub fn set(&mut self, name: &str, value: &str) {
         if self.get(name).is_some() {
-            self.0.retain(|&l| l.name == name);
+            self.0.retain(|l| l.name == name);
         }
         self.0.push(Label { name: name.to_string(), value: value.to_string() })
     }
