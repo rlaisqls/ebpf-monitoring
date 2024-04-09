@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fs, sync::{Arc, Mutex}, thread};
 use std::any::Any;
 use std::borrow::Borrow;
+use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
@@ -114,7 +115,7 @@ pub struct Session<'a> {
 impl SamplesCollector for Session<'_> {
 
     fn collect_profiles<F>(&mut self, callback: F) -> Result<()> where F: Fn(ProfileSample) {
-        self.sym_cache.next_round();
+        self.sym_cache.borrow_mut().next_round();
         self.round_number += 1;
 
         self.collect_regular_profile(callback).unwrap();
@@ -204,7 +205,7 @@ impl Session<'_> {
 
     pub fn update_targets(&mut self, args: TargetsOptions) {
         self.target_finder.update(args);
-        for pid in self.pids.unknown.iter() {
+        for pid in self.pids.unknown.iter_mut() {
             let target = self.target_finder.find_target(pid.0);
             if let Some(target) = target {
                 self.start_profiling_locked(pid.0, target);
@@ -389,7 +390,8 @@ impl Session<'_> {
     }
 
     fn get_counts_map_values(&mut self) -> Result<(Vec<sample_key>, Vec<u32>, bool)> {
-        let m = &self.bpf.maps().counts();
+        let maps = &self.bpf.maps();
+        let m = maps.counts();
         let map_size  = m.info().unwrap().info.max_entries as usize;
         let mut keys: Vec<sample_key> = Vec::with_capacity(map_size);
         let mut values: Vec<u32> = Vec::with_capacity(map_size);
@@ -443,7 +445,8 @@ impl Session<'_> {
             // do nothing, already deleted with GetValueAndDeleteBatch in getCountsMapValues
             return Ok(());
         }
-        let m = &self.bpf.maps().counts();
+        let maps = &self.bpf.maps();
+        let m = maps.counts();
 
         // m.delete(keys)?;
         let ret = unsafe {
@@ -462,7 +465,8 @@ impl Session<'_> {
     }
 
     fn clear_stacks_map(&mut self, known_keys: &HashMap<u32, bool>) -> Result<()> {
-        let m = &self.bpf.maps().stacks();
+        let maps = &self.bpf.maps();
+        let m = maps.stacks();
         let mut cnt = 0;
         let mut errs = 0;
 
@@ -515,7 +519,7 @@ impl Session<'_> {
                 if self.pids.dead.contains_key(&ck.pid) {
                     continue;
                 }
-                if let Some(mut proc) = self.sym_cache.get_proc_table(ck.pid) {
+                if let Some(mut proc) = self.sym_cache.borrow_mut().get_proc_table(ck.pid) {
                     let u_stack = self.get_stack(ck.user_stack).unwrap();
                     let k_stack = self.get_stack(ck.kern_stack).unwrap();
                     let mut stats = StackResolveStats::default();
