@@ -8,6 +8,15 @@ pub trait SymbolTable {
     fn resolve(&mut self, addr: u64) -> Option<&Symbol>;
 }
 
+impl Resource for dyn SymbolTable {
+    fn refresh(&mut self) {
+        self.refresh()
+    }
+    fn cleanup(&mut self) {
+        self.cleanup()
+    }
+}
+
 pub trait SymbolNameResolver {
     fn refresh(&mut self);
     fn cleanup(&mut self);

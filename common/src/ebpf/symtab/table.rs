@@ -36,11 +36,6 @@ impl SymbolTab {
     }
 }
 
-impl Resource for SymbolTab {
-    fn refresh(&mut self) {}
-    fn cleanup(&mut self) {}
-}
-
 impl SymbolTable for SymbolTab {
 
     fn refresh(&mut self) {}
