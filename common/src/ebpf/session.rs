@@ -88,7 +88,7 @@ pub struct Session<'a> {
     sym_cache: Arc<SymbolCache<'a>>,
     bpf: ProfileSkel<'a>,
 
-    events_reader: Option<Reader>,
+    events_reader: Option<Arc<Reader>>,
     pid_info_requests: Option<Receiver<u32>>,
     dead_pid_events: Option<Receiver<u32>>,
     pid_exec_requests: Option<Receiver<u32>>,
@@ -158,6 +158,9 @@ impl Session<'_> {
 
         self.bpf.attach().unwrap();
         self.bpf.maps().events();
+        let events_reader = Reader::new(
+            MapHandle::try_clone(self.bpf.maps().events()).unwrap(), 4 * page_size::get()
+        ).unwrap();
         self.perf_events = attach_perf_events(
             self.options.sample_rate,
             &self.bpf.links.do_perf_event.take().unwrap()
@@ -167,8 +170,7 @@ impl Session<'_> {
             self.stop_locked();
             return Err(SessionError(err));
         }
-
-        self.events_reader = None;
+        self.events_reader = Some(Arc::new(events_reader));
 
         let (pid_info_request_tx, pid_info_request_rx) = channel::<u32>();
         let (pid_exec_request_tx, pid_exec_request_rx) = channel::<u32>();
@@ -281,11 +283,8 @@ impl Session<'_> {
         pid_exec_request: Sender<u32>,
         dead_pids_events: Sender<u32>,
     ) {
-        let mut events_reader = Reader::new(
-            MapHandle::try_clone(self.bpf.maps().events()).unwrap(), 4 * page_size::get()
-        ).unwrap();
         loop {
-            match events_reader.read() {
+            match self.events_reader.take().unwrap().read() {
                 Ok(record) => {
                     if record.lost_samples != 0 {
                         error!(

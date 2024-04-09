@@ -35,6 +35,16 @@ pub struct ElfRange<'a> {
     elf_table: Option<ElfTable<'a>>,
 }
 
+impl Resource for ProcTable<'_> {
+    fn refresh(&mut self) {
+        self.refresh()
+    }
+
+    fn cleanup(&mut self) {
+        self.cleanup()
+    }
+}
+
 impl SymbolTable for ProcTable<'_> {
     fn refresh(&mut self) {
         self.refresh()

@@ -65,7 +65,7 @@ pub struct Reader {
     // stored in it, so we keep a reference alive.
     array: MapHandle,
     rings: Vec<Arc<PerfEventRing>>,
-    epoll_events: polling::Events,
+    epoll_events: Arc<polling::Events>,
     epoll_rings: Vec<Arc<PerfEventRing>>,
     event_header: Vec<u8>,
 
@@ -105,9 +105,9 @@ impl Reader {
             poller,
             deadline: Some(Duration::from_secs(10)),
             mu: Arc::new(Mutex::new(())),
-            array: array,
+            array,
             rings,
-            epoll_events: polling::Events::new(),
+            epoll_events: Arc::new(polling::Events::new()),
             epoll_rings: Vec::new(),
             event_header: vec![0; PERF_EVENT_HEADER_SIZE],
             pause_mu: Arc::new(Mutex::new(())),
@@ -262,7 +262,7 @@ trait RingReader {
 struct PerfEventRing {
     fd: RawFd,
     cpu: i32,
-    mmap: *mut u8,
+    mmap: Arc<*mut u8>,
     ring_reader: ForwardReader
 }
 
@@ -293,16 +293,16 @@ impl PerfEventRing {
         Ok(PerfEventRing {
             fd,
             cpu,
-            mmap: mmap as *mut u8,
+            mmap: Arc::new(mmap as *mut u8),
             ring_reader,
         })
     }
 
     fn close(&mut self) {
         let _ = unsafe { close(self.fd) };
-        let _ = unsafe { munmap(self.mmap as *mut c_void, 0) };
+        // let _ = unsafe { munmap(self.mmap as *mut c_void, 0) };
         self.fd = -1;
-        self.mmap = ptr::null_mut();
+        self.mmap = Arc::new(ptr::null_mut());
     }
 }
 
