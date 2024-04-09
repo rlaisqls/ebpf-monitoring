@@ -21,7 +21,7 @@ use log::{debug, error, info};
 use prometheus::opts;
 
 use profile::*;
-use crate::common::collector::{CollectProfilesCallback, ProfileSample, SamplesCollector, SampleType};
+use crate::common::collector::{ProfileSample, SamplesCollector, SampleType};
 
 use crate::ebpf::cpuonline;
 use crate::ebpf::metrics::metrics::Metrics;
@@ -113,7 +113,7 @@ pub struct Session<'a> {
 
 impl SamplesCollector for Session<'_> {
 
-    fn collect_profiles(&mut self, callback: CollectProfilesCallback) -> Result<()> {
+    fn collect_profiles<F>(&mut self, callback: F) -> Result<()> where F: Fn(ProfileSample) {
         let _guard = self.mutex.lock().unwrap();
         self.sym_cache.next_round();
         self.round_number += 1;
@@ -158,9 +158,6 @@ impl Session<'_> {
 
         self.bpf.attach().unwrap();
         self.bpf.maps().events();
-        let events_reader = Reader::new(
-            MapHandle::try_clone(self.bpf.maps().events()).unwrap(), 4 * page_size::get()
-        ).unwrap();
         self.perf_events = attach_perf_events(
             self.options.sample_rate,
             &self.bpf.links.do_perf_event.take().unwrap()
@@ -170,7 +167,8 @@ impl Session<'_> {
             self.stop_locked();
             return Err(SessionError(err));
         }
-        self.events_reader = Some(events_reader);
+
+        self.events_reader = None;
 
         let (pid_info_request_tx, pid_info_request_rx) = channel::<u32>();
         let (pid_exec_request_tx, pid_exec_request_rx) = channel::<u32>();
@@ -283,8 +281,11 @@ impl Session<'_> {
         pid_exec_request: Sender<u32>,
         dead_pids_events: Sender<u32>,
     ) {
+        let mut events_reader = Reader::new(
+            MapHandle::try_clone(self.bpf.maps().events()).unwrap(), 4 * page_size::get()
+        ).unwrap();
         loop {
-            match self.events_reader.take().unwrap().read() {
+            match events_reader.read() {
                 Ok(record) => {
                     if record.lost_samples != 0 {
                         error!(
@@ -448,7 +449,7 @@ impl Session<'_> {
                 let mut value: u32 = 0;
                 bpf_map_lookup_elem(
                     m.as_fd().as_raw_fd(),
-                    key.as_mut_ptr() as *mut c_void,
+                    key as *const _ as *const c_void,
                     &mut value as *mut _ as *mut c_void,
                 );
                 result_keys.push(key.clone());
@@ -521,7 +522,7 @@ impl Session<'_> {
         }
     }
 
-    fn collect_regular_profile(&mut self, cb: CollectProfilesCallback) -> Result<()> {
+    fn collect_regular_profile<F>(&mut self, cb: F) -> Result<()> where F: Fn(ProfileSample) {
         let mut sb = StackBuilder::new();
         let mut known_stacks: HashMap<u32, bool> = HashMap::new();
         let (keys, values, batch) = self.get_counts_map_values().unwrap();

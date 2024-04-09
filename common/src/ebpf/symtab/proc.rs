@@ -21,6 +21,7 @@ pub struct ProcTable<'a> {
     pid: i32,
     elf_table_options: ElfTableOptions<'a>
 }
+unsafe impl Sync for ProcTable<'_> {}
 
 pub struct ProcTableDebugInfo {
     elf_tables: HashMap<String, SymTabDebugInfo>,

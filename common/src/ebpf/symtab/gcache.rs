@@ -78,9 +78,8 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
                 entry.v.cleanup();
             });
 
-        self.round_cache = self.round_cache.iter_mut()
-            .filter(|(_, entry)| entry.round >= self.round - self.options.keep_rounds)
-            .collect();
+        self.round_cache
+            .retain(|k, entry| entry.round < self.round-self.options.keep_rounds);
     }
 
     pub fn lru_size(&self) -> usize {
