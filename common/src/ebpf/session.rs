@@ -16,7 +16,7 @@ use gimli::LittleEndian;
 use libbpf_rs::{Error, libbpf_sys, Link, Map, MapFlags, MapHandle};
 use libbpf_rs::libbpf_sys::{bpf_map_batch_opts, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
-use libbpf_sys::{__u32, bpf_map_lookup_batch};
+use libbpf_sys::{__u32, bpf_map_lookup_batch, bpf_map_lookup_elem};
 use log::{debug, error, info};
 use prometheus::opts;
 
@@ -439,17 +439,23 @@ impl Session<'_> {
                 println!("getCountsMapValues BatchLookupAndDelete count: {}", n);
                 return Ok((keys[..size].to_vec(), values[..size].to_vec(), true));
             }
-            Err(NotFound("".to_string()))
-            //
-            // let mut result_keys: Vec<sample_key> = Vec::with_capacity(map_size);
-            // let mut result_values: Vec<u32> = Vec::with_capacity(map_size);
-            // let mut it = m.iterate();
-            // while let Some((&k, &v)) = it.next() {
-            //     result_keys.push(k);
-            //     result_values.push(v);
-            // }
-            // println!("getCountsMapValues iter count: {}", keys.len());
-            // Ok((result_keys, result_values, false))
+
+            let mut result_keys: Vec<sample_key> = Vec::with_capacity(map_size);
+            let mut result_values: Vec<u32> = Vec::with_capacity(map_size);
+
+            while let Some(bytes) = m.keys().next() {
+                let mut key = byte_to_value::<sample_key>(&bytes).unwrap();
+                let mut value: u32 = 0;
+                bpf_map_lookup_elem(
+                    m.as_fd().as_raw_fd(),
+                    key.as_mut_ptr() as *mut c_void,
+                    &mut value as *mut _ as *mut c_void,
+                );
+                result_keys.push(key.clone());
+                result_values.push(value.clone());
+            }
+            println!("getCountsMapValues iter count: {}", keys.len());
+            Ok((result_keys, result_values, false))
         }
     }
 
@@ -486,13 +492,8 @@ impl Session<'_> {
 
         if self.round_number % 10 == 0 {
             // do a full reset once in a while
-            let mut it = m.iterate();
-            let mut keys: Vec<u32> = Vec::new();
-            while let Some((k, _)) = it.next() {
-                keys.push(k);
-            }
-            for k in keys {
-                if let Err(_e) = m.delete(&k.to_le_bytes()) {
+            while let Some(k) = m.keys().next() {
+                if let Err(_e) = m.delete(k.as_slice()) {
                     errs += 1;
                 } else {
                     cnt += 1;
@@ -629,7 +630,8 @@ impl Session<'_> {
             return None;
         }
         let stack_id_u32 = stack_id as u32;
-        self.bpf.maps().stacks()
+        self.bpf.maps()
+            .stacks()
             .lookup(stack_id_u32.to_le_bytes().as_slice(), MapFlags::ANY)
             .unwrap_or_else(|_| None)
     }
@@ -798,4 +800,16 @@ impl StackResolveStats {
         self.unknown_symbols += other.unknown_symbols;
         self.unknown_modules += other.unknown_modules;
     }
+}
+
+fn byte_to_value<V>(bytes: &Vec<u8>) -> Option<&V> {
+    if bytes.len() != std::mem::size_of::<V>() {
+        return None;
+    }
+    let ptr = bytes.as_ptr() as *const V;
+    let value_ref: &V;
+    unsafe {
+        value_ref = &*ptr;
+    }
+    return Some(value_ref)
 }
