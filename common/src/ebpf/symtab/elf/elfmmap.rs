@@ -24,6 +24,7 @@ pub struct MappedElfFile<'a> {
     pub fd: Option<File>,
 
     pub string_cache: HashMap<usize, String>,
+    pub buffer: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -42,6 +43,7 @@ impl MappedElfFile<'_> {
             fpath,
             fd,
             elf,
+            buffer,
             string_cache: HashMap::new(),
         })
     }

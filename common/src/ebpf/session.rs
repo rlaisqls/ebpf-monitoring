@@ -582,7 +582,7 @@ impl Session<'_> {
         "pid_unknown".to_string()
     }
 
-    fn walk_stack(&self, sb: &mut StackBuilder, stack: &[u8], mut resolver: Arc<dyn SymbolTable>, stats: &mut StackResolveStats) {
+    fn walk_stack(&self, sb: &mut StackBuilder, stack: &[u8], mut resolver: Arc<Mutex<dyn SymbolTable>>, stats: &mut StackResolveStats) {
         if stack.is_empty() {
             return;
         }
@@ -598,7 +598,8 @@ impl Session<'_> {
             if instruction_pointer == 0 {
                 break;
             }
-            let sym = resolver.resolve(instruction_pointer).unwrap();
+            let mut r = resolver.lock().unwrap();
+            let sym = r.resolve(instruction_pointer).unwrap();
             let name = if !sym.name.is_empty() {
                 stats.known += 1;
                 sym.name.clone()

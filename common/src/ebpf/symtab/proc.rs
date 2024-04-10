@@ -201,7 +201,8 @@ impl<'a> ProcTable<'a> {
             last_used_round: 0,
         };
         for (file, elf) in &self.file_to_table {
-            let d = elf.table.debug_info();
+            let table = elf.table.lock().unwrap();
+            let d = table.debug_info();
             if d.size != 0 {
                 res.elf_tables.insert(format!("{} {} {}", file.dev, file.inode, file.path), d);
             }

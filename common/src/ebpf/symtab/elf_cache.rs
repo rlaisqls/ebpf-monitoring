@@ -20,33 +20,35 @@ impl<'a> ElfCache<'a> {
         Ok(Self { build_id_cache, same_file_cache })
     }
 
-    pub fn get_symbols_by_build_id(&self, build_id: &BuildID) -> Option<Arc<SymbolNameTable>> {
+    pub fn get_symbols_by_build_id(&self, build_id: &BuildID) -> Option<Arc<Mutex<SymbolNameTable>>> {
         let res = self.build_id_cache.lock().unwrap().get(build_id).unwrap();
-        if res.is_dead() {
+        let sym_tab = res.lock().unwrap();
+        if sym_tab.is_dead() {
             self.build_id_cache.lock().unwrap().remove(build_id);
             return None;
         }
         Some(res)
     }
 
-    pub fn cache_by_build_id(&self, build_id: BuildID, v: Arc<SymbolNameTable>) {
+    pub fn cache_by_build_id(&self, build_id: BuildID, v: Arc<Mutex<SymbolNameTable>>) {
         self.build_id_cache.lock().unwrap().cache(build_id, v);
     }
 
-    pub fn get_symbols_by_stat(&self, s: Stat) -> Option<Arc<SymbolNameTable>> {
+    pub fn get_symbols_by_stat(&self, s: Stat) -> Option<Arc<Mutex<SymbolNameTable>>> {
         let res = self.same_file_cache.lock().unwrap().get(&s);
         if res.is_none() {
             return None
         }
-        let sym_tab = res.unwrap();
+        let st = res.unwrap();
+        let sym_tab = st.lock().unwrap();
         if sym_tab.is_dead() {
             self.same_file_cache.lock().unwrap().remove(&s);
             return None;
         }
-        Some(sym_tab)
+        Some(st)
     }
 
-    pub fn cache_by_stat(&self, s: Stat, v: Arc<SymbolNameTable>) {
+    pub fn cache_by_stat(&self, s: Stat, v: Arc<Mutex<SymbolNameTable>>) {
         self.same_file_cache.lock().unwrap().cache(s, v);
     }
 
@@ -68,15 +70,17 @@ impl<'a> ElfCache<'a> {
     pub fn debug_info(&self) -> ElfCacheDebugInfo {
         let build_id_cache = debug_info::<BuildID, SymbolNameTable, SymTabDebugInfo>(
             self.build_id_cache.lock().unwrap().deref(),
-            |b: &BuildID, v: &SymbolNameTable, round: i32| {
-                let mut res = v.debug_info();
+            |b: &BuildID, v: &Arc<Mutex<SymbolNameTable>>, round: i32| {
+                let value = v.lock().unwrap();
+                let mut res = value.debug_info();
                 res.last_used_round = round;
                 res
             });
         let same_file_cache = debug_info::<Stat, SymbolNameTable, SymTabDebugInfo>(
             self.same_file_cache.lock().unwrap().deref(),
-            |s: &Stat, v: &SymbolNameTable, round: i32| {
-                let mut res = v.debug_info();
+            |s: &Stat, v: &Arc<Mutex<SymbolNameTable>>, round: i32| {
+                let value = v.lock().unwrap();
+                let mut res = value.debug_info();
                 res.last_used_round = round;
                 res
             });

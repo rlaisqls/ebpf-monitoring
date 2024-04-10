@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use crate::ebpf::symtab::symbols::PidKey;
 
 pub trait Resource {
@@ -16,8 +16,8 @@ pub trait Resource {
 
 pub struct GCache<K: Eq + Hash + Clone, V: Resource> {
     options: GCacheOptions,
-    round_cache: HashMap<K, Arc<Entry<V>>>,
-    lru_cache: LruCache<K, Arc<Entry<V>>>,
+    round_cache: HashMap<K, Arc<Mutex<Entry<Arc<Mutex<V>>>>>>,
+    lru_cache: LruCache<K, Arc<Mutex<Entry<Arc<Mutex<V>>>>>>,
     round: i32,
 }
 
@@ -34,17 +34,22 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
         self.round += 1;
     }
 
-    pub fn get(&mut self, k: &K) -> Option<Arc<V>> {
-        if let Some(entry) = self.lru_cache.get_mut(k) {
+    pub fn get(&mut self, k: &K) -> Option<Arc<Mutex<V>>> {
+        // MutexGuard<Entry<Arc<Mutex<V>>>>
+        if let Some(e) = self.lru_cache.get_mut(k) {
+            let mut entry = e.lock().unwrap();
             if entry.round != self.round {
                 entry.round = self.round;
-                entry.v.refresh();
+                let mut v = entry.v.lock().unwrap();
+                v.refresh();
             }
             Some(entry.v.clone())
-        } else if let Some(entry) = self.round_cache.get_mut(k) {
+        } else if let Some(e) = self.round_cache.get_mut(k) {
+            let mut entry = e.lock().unwrap();
             if entry.round != self.round {
                 entry.round = self.round;
-                entry.v.refresh();
+                let mut v = entry.v.lock().unwrap();
+                v.refresh();
             }
             Some(entry.v.clone())
         } else {
@@ -52,9 +57,11 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
         }
     }
 
-    pub fn cache(&mut self, k: K, v: Arc<V>) {
-        let mut entry = Arc::new(Entry { v, round: self.round });
-        entry.v.refresh();
+    pub fn cache(&mut self, k: K, v: Arc<Mutex<V>>) {
+        let mut e = Entry { v, round: self.round };
+        let mut value = e.v.lock().unwrap();
+        value.refresh();
+        let mut entry = Arc::new(Mutex::new(e));
         self.lru_cache.put(k.clone(), entry);
         self.round_cache.insert(k, entry.clone());
     }
@@ -67,19 +74,24 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
 
     pub fn cleanup(&mut self) {
         self.lru_cache.iter_mut()
-            .for_each(|(k, entry)| {
-                if let Some(mut entry) = self.lru_cache.get_mut(k) {
-                    entry.v.cleanup();
-                }
+            .for_each(|(k, e)| {
+                let entry = e.lock().unwrap();
+                let mut value = entry.v.lock().unwrap();
+                value.cleanup();
             });
 
         self.round_cache.iter_mut()
-            .for_each(|(k, entry)| {
-                entry.v.cleanup();
+            .for_each(|(k, e)| {
+                let entry = e.lock().unwrap();
+                let mut value = entry.v.lock().unwrap();
+                value.cleanup();
             });
 
         self.round_cache
-            .retain(|k, entry| entry.round < self.round-self.options.keep_rounds);
+            .retain(|k, e| {
+                let entry = e.lock().unwrap();
+                entry.round < self.round-self.options.keep_rounds
+            });
     }
 
     pub fn lru_size(&self) -> usize {
@@ -95,22 +107,24 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
         self.round_cache.remove(k);
     }
 
-    pub fn each_lru(&self, f: impl Fn(&K, &V, i32)) {
-        for (k, entry) in self.lru_cache.iter() {
+    pub fn each_lru(&self, f: impl Fn(&K, &Arc<Mutex<V>>, i32)) {
+        for (k, e) in self.lru_cache.iter() {
+            let entry = e.lock().unwrap();
             f(k, &entry.v, entry.round);
         }
     }
 
-    pub fn each_round(&self, f: impl Fn(&K, &V, i32)) {
-        for (k, entry) in &self.round_cache {
+    pub fn each_round(&self, f: impl Fn(&K, &Arc<Mutex<V>>, i32)) {
+        for (k, e) in &self.round_cache {
+            let entry = e.lock().unwrap();
             f(k, &entry.v, entry.round);
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Entry<V> {
-    v: Arc<V>,
+    v: V,
     round: i32,
 }
 
@@ -146,7 +160,7 @@ impl<T: Debug> Default for GCacheDebugInfo<T> {
     }
 }
 
-pub fn debug_info<K, V, D>(g: &GCache<K, V>, ff: fn(&K, &V, i32) -> D) -> GCacheDebugInfo<D>
+pub fn debug_info<K, V, D>(g: &GCache<K, V>, ff: fn(&K, &Arc<Mutex<V>>, i32) -> D) -> GCacheDebugInfo<D>
     where
         K: Eq + Hash + Clone,
         V: Resource,
@@ -158,10 +172,10 @@ pub fn debug_info<K, V, D>(g: &GCache<K, V>, ff: fn(&K, &V, i32) -> D) -> GCache
         lru_dump: Vec::with_capacity(g.lru_size()),
         round_dump: Vec::with_capacity(g.round_size()),
     };
-    g.each_lru(|k: &K, v: &V, round: i32| {
+    g.each_lru(|k: &K, v: &Arc<Mutex<V>>, round: i32| {
         res.lru_dump.push(ff(k, v, round));
     });
-    g.each_round(|k: &K, v: &V, round: i32| {
+    g.each_round(|k: &K, v: &Arc<Mutex<V>>, round: i32| {
         res.round_dump.push(ff(k, v, round));
     });
 

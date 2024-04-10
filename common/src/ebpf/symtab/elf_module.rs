@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use log::info;
 use std::borrow::BorrowMut;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use goblin::elf::header::ET_EXEC;
 use goblin::elf::program_header::{PF_X, PT_LOAD};
 use rustix::path::Arg;
@@ -39,7 +39,7 @@ impl Default for SymbolOptions {
 
 pub struct ElfTable<'a> {
     fs: String,
-    pub(crate) table: Arc<dyn SymbolNameResolver>,
+    pub(crate) table: Arc<Mutex<dyn SymbolNameResolver>>,
     pub(crate) base: u64,
     loaded: bool,
     loaded_cached: bool,
@@ -52,7 +52,7 @@ impl ElfTable<'_> {
     pub fn new(proc_map: Arc<ProcMap>, fs: String, options: ElfTableOptions) -> Self {
         Self {
             fs,
-            table: Arc::new(NoopSymbolNameResolver {}),
+            table: Arc::new(Mutex::new(NoopSymbolNameResolver {})),
             base: 0,
             loaded: false,
             loaded_cached: false,
@@ -105,8 +105,8 @@ impl ElfTable<'_> {
             }
         };
 
-        if let Some(symbols) = self.options.elf_cache.get_symbols_by_stat(stat_from_file_info(&file_info)) {
-            self.table = symbols.clone();
+        if let Some(s) = self.options.elf_cache.get_symbols_by_stat(stat_from_file_info(&file_info)) {
+            self.table = s;
             self.loaded_cached = true;
             return;
         }
@@ -122,30 +122,30 @@ impl ElfTable<'_> {
                 }
             };
 
-            let symbols = Arc::new(match create_symbol_table(debug_me) {
+            let symbols = Arc::new(Mutex::new(match create_symbol_table(debug_me) {
                 Ok(sym) => sym,
                 Err(err) => {
                     self.on_load_error(err);
                     return;
                 }
-            });
+            }));
             self.table = symbols.clone();
-            self.options.elf_cache.cache_by_build_id(build_id, symbols);
+            self.options.elf_cache.cache_by_build_id(build_id, symbols.clone());
             return;
         }
 
-        let symbols = Arc::new(match create_symbol_table(me) {
+        let symbols = Arc::new(Mutex::new(match create_symbol_table(me) {
             Ok(sym) => sym,
             Err(_err) => {
                 return;
             }
-        });
+        }));
 
         self.table = symbols.clone();
         if build_id.is_empty() {
             self.options.elf_cache.cache_by_stat(stat_from_file_info(&file_info), symbols.clone());
         } else {
-            self.options.elf_cache.cache_by_build_id(build_id, symbols);
+            self.options.elf_cache.cache_by_build_id(build_id, symbols.clone());
         }
     }
 
@@ -237,28 +237,31 @@ impl ElfTable<'_> {
         if let Some(_err) = &self.err { return None; }
 
         pc -= self.base;
-        let res = self.table.resolve(pc);
+        let mut table = self.table.lock().unwrap();
+        let res = table.resolve(pc);
 
         if res.is_some() {
             return res;
-        } else if !self.table.is_dead() {
+        } else if !table.is_dead() {
             return None;
         } else if !self.loaded_cached {
             self.err = Some(ELFError("Table is dead".to_string()));
             return None;
         }
 
-        self.table = Arc::new(NoopSymbolNameResolver {});
+        self.table = Arc::new(Mutex::new(NoopSymbolNameResolver {}));
         self.loaded = false;
         self.loaded_cached = false;
         self.load();
 
         if let Some(_err) = &self.err { return None; }
-        self.table.resolve(pc)
+
+        table.resolve(pc)
     }
 
     pub fn cleanup(&mut self) {
-        self.table.cleanup();
+        let mut table = self.table.lock().unwrap();
+        table.cleanup();
     }
 }
 
