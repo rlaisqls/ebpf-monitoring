@@ -5,6 +5,7 @@ use std::{
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
+use std::sync::Mutex;
 use log::error;
 use tokio::time::interval;
 use common::common::collector::collect;
@@ -73,7 +74,7 @@ impl Component for EbpfLinuxComponent {
                 _ = self.session.changed() => {
                     let debug_info = DebugInfo {
                         targets: self.session.target_finder.debug_info(),
-                        session: self.session.debug_info(),
+                        session: self.session.debug_info().unwrap(),
                     };
                     self.debug_info = debug_info;
                 }
@@ -90,7 +91,7 @@ impl Component for EbpfLinuxComponent {
 
 impl EbpfLinuxComponent {
     pub async fn new(opts: Options, args: Arguments) -> Result<Self> {
-        let target_finder = Arc::new(Cell::new(TargetFinder::new(
+        let target_finder = Arc::new(Mutex::new(TargetFinder::new(
             1024,
             File::open("/").unwrap()
         )));
@@ -111,7 +112,7 @@ impl EbpfLinuxComponent {
         let mut builders = pprof::ProfileBuilders::new(
             BuildersOptions { sample_rate: 1000, per_pid_profile: false }
         );
-        collect(&mut builders, &mut self.session).await.unwrap();
+        collect(Arc::new(Mutex::new(builders)), &mut self.session).await.unwrap();
 
         for (_, builder) in builders.builders {
             let service_name = builder.labels.get(LABEL_SERVICE_NAME).unwrap().trim();
@@ -143,11 +144,13 @@ impl EbpfLinuxComponent {
     }
 
     fn update_debug_info(&mut self) {
-        let debug_info = DebugInfo {
-            targets: self.session.target_finder.debug_info(),
-            session: self.session.debug_info(),
-        };
-        self.debug_info = debug_info;
+        if let Ok(mut target_finder) = self.session.target_finder.lock() {
+            let debug_info = DebugInfo {
+                targets: target_finder.debug_info(),
+                session: self.session.debug_info().unwrap(),
+            };
+            self.debug_info = debug_info;
+        }
     }
 }
 

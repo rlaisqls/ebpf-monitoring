@@ -54,9 +54,9 @@ impl SymbolTable for ProcTable<'_> {
         self.cleanup()
     }
 
-    fn resolve(&mut self, pc: u64) -> Option<&Symbol> {
+    fn resolve(&mut self, pc: u64) -> Option<Symbol> {
         if pc == 0xcccccccccccccccc || pc == 0x9090909090909090 {
-            return Some(&Symbol {
+            return Some(Symbol {
                 start: 0,
                 name: "end_of_stack".to_string(),
                 module: "[unknown]".to_string(),
@@ -65,7 +65,7 @@ impl SymbolTable for ProcTable<'_> {
 
         let i = self.ranges.binary_search_by(|e| binary_search_elf_range(e, pc));
         if i.is_err() {
-            return Some(&Symbol::default());
+            return Some(Symbol::default());
         }
 
         let r = &self.ranges.get_mut(i.unwrap()).unwrap();
@@ -73,14 +73,14 @@ impl SymbolTable for ProcTable<'_> {
             let module_offset = pc - t.base;
             return match t.resolve(pc) {
                 Some(s) => {
-                    Some(&Symbol {
+                    Some(Symbol {
                         start: module_offset,
                         name: s,
                         module: r.map_range.pathname.clone(),
                     })
                 }
                 None => {
-                    Some(&Symbol {
+                    Some(Symbol {
                         start: module_offset,
                         name: "".to_string(),
                         module: r.map_range.pathname.clone(),
@@ -88,7 +88,7 @@ impl SymbolTable for ProcTable<'_> {
                 }
             }
         }
-        Some(&Symbol::default())
+        Some(Symbol::default())
     }
 }
 
@@ -165,9 +165,9 @@ impl<'a> ProcTable<'a> {
 
     fn refresh_proc_map(&mut self, proc_maps: String) -> Result<()> {
         // todo support perf map files
-        for range in &mut self.ranges {
-            range.elf_table = None;
-        }
+        // for range in &mut self.ranges {
+        //     range.elf_table = None;
+        // }
         self.ranges.clear();
 
         let mut files_to_keep: HashMap<File, ()> = HashMap::new();

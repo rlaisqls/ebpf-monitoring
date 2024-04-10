@@ -13,7 +13,7 @@ use goblin::elf::sym::{STT_FUNC, sym32, sym64};
 use crate::ebpf::symtab::elf::pcindex::PCIndex;
 use crate::ebpf::symtab::elf::symbol_table::{FlatSymbolIndex, SECTION_TYPE_DYN_SYM, SECTION_TYPE_SYM, SectionLinkIndex, SymbolIndex, SymbolNameTable};
 use crate::ebpf::symtab::elf::symbol_table::Name;
-use crate::error::Error::SymbolError;
+use crate::error::Error::{NotFound, SymbolError};
 use crate::error::Result;
 
 #[derive(Debug)]
@@ -37,11 +37,11 @@ impl MappedElfFile<'_> {
         let mut fd = Some(File::open(&fpath).unwrap());
         let mut buffer = Vec::new();
         fd.as_ref().borrow_mut().unwrap().read_to_end(&mut buffer).unwrap();
-
+        let elf = Elf::parse(buffer.as_slice()).unwrap();
         Ok(Self {
             fpath,
             fd,
-            elf: Elf::parse(&buffer).unwrap(),
+            elf,
             string_cache: HashMap::new(),
         })
     }
@@ -62,13 +62,30 @@ impl MappedElfFile<'_> {
         Ok(())
     }
 
-    pub(crate) fn section_data(&mut self, s: &SectionHeader) -> Result<Vec<u8>> {
-        let mut res = vec![0; s.sh_size as usize];
+    pub(crate) fn section_data_by_section_name(&mut self, name: &str) -> Result<Vec<u8>> {
+        let section = match self.elf.section_headers.iter().find(|s| self.elf.shdr_strtab.get_at(s.sh_name) == Some(name)) {
+            Some(section) => section,
+            None => return Err(NotFound("".to_string()))
+        };
+        let mut res = vec![0; section.sh_size as usize];
         let mut fd = self.fd.borrow_mut().as_ref().unwrap();
-        fd.seek(SeekFrom::Start(s.sh_offset)).unwrap();
+        fd.seek(SeekFrom::Start(section.sh_offset)).unwrap();
         fd.read_exact(&mut res).unwrap();
 
         Ok(res)
+    }
+
+    pub(crate) fn section_data(&mut self, typ: u32) -> Result<(Vec<u8>, &SectionHeader)> {
+        let section = match self.elf.section_headers.iter().find(|s| s.sh_type == typ) {
+            Some(section) => section,
+            None => return Err(SymbolError("No symbol section".to_string())),
+        };
+        let mut res = vec![0; section.sh_size as usize];
+        let mut fd = self.fd.borrow_mut().as_ref().unwrap();
+        fd.seek(SeekFrom::Start(section.sh_offset)).unwrap();
+        fd.read_exact(&mut res).unwrap();
+
+        Ok((res, section))
     }
 
     pub(crate) fn get_string(&mut self, start: usize) -> Result<(String, bool)> {
@@ -112,13 +129,7 @@ impl MappedElfFile<'_> {
     }
 
     fn get_symbols64(&mut self, typ: u32) -> Result<(Vec<SymbolIndex>, u32)> {
-        let symtab_section = match self.section_by_type(typ) {
-            Some(section) => section,
-            None => return Err(SymbolError("No symbol section".to_string())),
-        };
-        let link_index = Self::get_link_index(typ);
-
-        let mut data = self.section_data(&symtab_section).unwrap();
+        let (mut data, section) = self.section_data(typ).unwrap();
         if data.len() % sym64::SIZEOF_SYM != 0 {
             return Err(SymbolError("Length of symbol section is not a multiple of Sym64Size".to_string()));
         }
@@ -144,6 +155,7 @@ impl MappedElfFile<'_> {
                 // if pc >= opt.filter_from && pc < opt.filter_to {
                 //     continue;
                 // }
+                let link_index = get_link_index(typ);
                 symbols.push(SymbolIndex {
                     name: Name::new(name, link_index.clone()),
                     value: pc,
@@ -151,17 +163,11 @@ impl MappedElfFile<'_> {
                 i += 1;
             }
         }
-        Ok((symbols, symtab_section.sh_link))
+        Ok((symbols, section.sh_link))
     }
 
     fn get_symbols32(&mut self, typ: u32) -> Result<(Vec<SymbolIndex>, u32)> {
-        let symtab_section = match self.section_by_type(typ) {
-            Some(section) => section,
-            None => return Err(SymbolError("No symbol section".to_string())),
-        };
-        let link_index = Self::get_link_index(typ);
-
-        let mut data = self.section_data(&symtab_section).unwrap();
+        let (mut data, section)  = self.section_data(typ).unwrap();
         if data.len() % sym32::SIZEOF_SYM != 0 {
             return Err(SymbolError("Length of symbol section is not a multiple of Sym32Size".to_string()));
         }
@@ -187,6 +193,7 @@ impl MappedElfFile<'_> {
                 // if pc >= opt.filter_from && pc < opt.filter_to {
                 //     continue;
                 // }
+                let link_index = get_link_index(typ);
                 symbols.push(SymbolIndex {
                     name: Name::new(name, link_index.clone()),
                     value: pc,
@@ -194,18 +201,17 @@ impl MappedElfFile<'_> {
                 i += 1;
             }
         }
-        Ok((symbols, symtab_section.sh_link))
-    }
-
-    fn get_link_index(typ: u32) -> SectionLinkIndex {
-        if typ == SHT_DYNSYM {
-            SECTION_TYPE_DYN_SYM
-        } else {
-            SECTION_TYPE_SYM
-        }
+        Ok((symbols, section.sh_link))
     }
 }
 
+fn get_link_index(typ: u32) -> SectionLinkIndex {
+    if typ == SHT_DYNSYM {
+        SECTION_TYPE_DYN_SYM
+    } else {
+        SECTION_TYPE_SYM
+    }
+}
 
 pub(crate) fn new_symbol_table(mut elf_file: MappedElfFile) -> Result<SymbolNameTable> {
     let (sym, section_sym) = elf_file.get_symbols(SHT_SYMTAB).unwrap();

@@ -1,6 +1,6 @@
-use crate::ebpf::symtab::gcache::Resource;
 use crate::ebpf::symtab::symtab::SymbolTable;
 
+#[derive(Clone)]
 pub struct Symbol {
     pub(crate) start: u64,
     pub(crate) name: String,
@@ -41,7 +41,7 @@ impl SymbolTable for SymbolTab {
     fn refresh(&mut self) {}
     fn cleanup(&mut self) {}
 
-    fn resolve(&mut self, addr: u64) -> Option<&Symbol> {
+    fn resolve(&mut self, addr: u64) -> Option<Symbol> {
         if self.symbols.is_empty() {
             return None;
         }
@@ -52,6 +52,11 @@ impl SymbolTable for SymbolTab {
         let index = self.symbols
             .binary_search_by(|sym| sym.start.cmp(&addr))
             .unwrap_or_else(|index| index - 1);
-        self.symbols.get(index)
+
+        return if let Some(s) = self.symbols.get(index) {
+            Some(s.clone())
+        } else {
+            None
+        }
     }
 }

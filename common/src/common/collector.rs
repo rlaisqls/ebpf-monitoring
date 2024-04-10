@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use crate::ebpf::pprof::ProfileBuilders;
 use crate::ebpf::sd::target::Target;
 use crate::error::Result;
@@ -26,9 +27,11 @@ pub trait SamplesCollector {
         where F: Fn(ProfileSample);
 }
 
-pub fn collect<S>(builders: &mut ProfileBuilders, mut collector: S) -> Result<()> where S: SamplesCollector {
+pub fn collect<S>(builders: Arc<Mutex<ProfileBuilders>>, mut collector: S) -> Result<()> where S: SamplesCollector {
     collector.collect_profiles(|sample: ProfileSample| {
-        builders.add_sample(sample);
+        if let Ok(mut b) = builders.lock() {
+            b.add_sample(sample);
+        }
     }).unwrap();
     Ok(())
 }

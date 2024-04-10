@@ -50,12 +50,7 @@ impl BuildIdentified for MappedElfFile<'_> {
     }
 
     fn go_build_id(&mut self) -> Result<BuildID> {
-        let build_id_section = self.section(".note.go.buildid");
-        if build_id_section.is_none() {
-            return Err(NotFound("".to_string()));
-        }
-        let build_id_section = build_id_section.unwrap();
-        let data_result = self.section_data(build_id_section).unwrap();
+        let data_result = self.section_data_by_section_name(".note.gnu.build-id").unwrap();
         let data = data_result.as_slice();
         if data.len() < 17 {
             return Err(InvalidData(".note.gnu.build-id is too small".to_string()));
@@ -75,12 +70,7 @@ impl BuildIdentified for MappedElfFile<'_> {
     }
 
     fn gnu_build_id(&mut self) -> Result<BuildID> {
-        let build_id_section = self.section(".note.gnu.build-id");
-        if build_id_section.is_none() {
-            return Err(NotFound("".to_string()));
-        }
-        let build_id_section = build_id_section.unwrap();
-        let data_result = self.section_data(build_id_section).unwrap();
+        let data_result = self.section_data_by_section_name(".note.gnu.build-id").unwrap();
         let data = data_result.as_slice();
         if data.len() < 16 {
             return Err(InvalidData(".note.gnu.build-id is too small".to_string()));

@@ -86,8 +86,8 @@ pub struct SessionDebugInfo {
 }
 
 pub struct Session<'a> {
-    pub target_finder: Arc<Cell<TargetFinder>>,
-    sym_cache: Arc<SymbolCache<'a>>,
+    pub target_finder: Arc<Mutex<TargetFinder>>,
+    sym_cache: Arc<Mutex<SymbolCache<'a>>>,
     bpf: ProfileSkel<'a>,
 
     events_reader: Option<Arc<Reader>>,
@@ -114,21 +114,21 @@ pub struct Session<'a> {
 }
 
 impl SamplesCollector for Session<'_> {
-
     fn collect_profiles<F>(&mut self, callback: F) -> Result<()> where F: Fn(ProfileSample) {
-        self.sym_cache.borrow_mut().next_round();
-        self.round_number += 1;
+        if let Ok(mut sym_cache) = self.sym_cache.lock() {
+            sym_cache.next_round();
+            self.round_number += 1;
 
-        self.collect_regular_profile(callback).unwrap();
-        self.cleanup();
-
+            self.collect_regular_profile(callback).unwrap();
+            self.cleanup();
+        }
         Ok(())
     }
 }
 
 impl Session<'_> {
-    pub fn new(target_finder: Arc<Cell<TargetFinder>>, opts: SessionOptions) -> Result<Self> {
-        let sym_cache = SymbolCache::new(opts.cache_options, &opts.metrics.symtab).unwrap();
+    pub fn new(target_finder: Arc<Mutex<TargetFinder>>, opts: SessionOptions) -> Result<Self> {
+        let sym_cache = Arc::new(Mutex::new(SymbolCache::new(opts.cache_options, &opts.metrics.symtab).unwrap()));
         bump_memlock_rlimit().unwrap();
         let mut open_skel = ProfileSkelBuilder::default().open().unwrap();
         let bpf = open_skel.load().unwrap();
@@ -137,7 +137,7 @@ impl Session<'_> {
             started: false,
             bpf,
             target_finder,
-            sym_cache: Arc::new(sym_cache),
+            sym_cache,
             options: opts,
             events_reader: None,
             pid_info_requests: None,
@@ -205,12 +205,14 @@ impl Session<'_> {
     }
 
     pub fn update_targets(&mut self, args: TargetsOptions) {
-        self.target_finder.get_mut().update(args);
-        for pid in self.pids.unknown.iter_mut() {
-            let target = self.target_finder.get_mut().find_target(pid.0);
-            if let Some(target) = target {
-                self.start_profiling_locked(pid.0, target);
-                self.pids.unknown.remove(pid.0);
+        if let Ok(mut target_finder) = self.target_finder.lock() {
+            target_finder.update(args);
+            for pid in self.pids.unknown.iter_mut() {
+                let target = target_finder.find_target(pid.0);
+                if let Some(target) = target {
+                    self.start_profiling_locked(pid.0, target);
+                    self.pids.unknown.remove(pid.0);
+                }
             }
         }
     }
@@ -319,19 +321,21 @@ impl Session<'_> {
     }
 
     fn process_pid_info_requests(&mut self, pid: u32) -> Result<()> {
-        let target = self.target_finder.get_mut().find_target(&pid);
-        debug!("pid info request: pid={}, target={:?}", pid, target);
+        if let Ok(mut target_finder) = self.target_finder.lock() {
+            let target = target_finder.find_target(&pid);
+            debug!("pid info request: pid={}, target={:?}", pid, target);
 
-        let already_dead = self.pids.dead.contains_key(&pid);
-        if already_dead {
-            debug!("pid info request for dead pid: {}", pid);
-            return Ok(());
-        }
+            let already_dead = self.pids.dead.contains_key(&pid);
+            if already_dead {
+                debug!("pid info request for dead pid: {}", pid);
+                return Ok(());
+            }
 
-        if target.is_none() {
-            self.save_unknown_pid_locked(&pid);
-        } else {
-            self.start_profiling_locked(&pid, target.unwrap());
+            if target.is_none() {
+                self.save_unknown_pid_locked(&pid);
+            } else {
+                self.start_profiling_locked(&pid, target.unwrap());
+            }
         }
         Ok(())
     }
@@ -347,18 +351,20 @@ impl Session<'_> {
     }
 
     fn process_pid_exec_requests(&mut self, pid: u32) -> Result<()> {
-        let target = self.target_finder.get_mut().find_target(&pid);
-        info!("pid exec request: {}", pid);
-        {
-            let _ = self.mutex.lock().unwrap();
-            if self.pids.dead.contains_key(&pid) {
-                info!("pid exec request for dead pid: {}", pid);
-                return Ok(());
-            }
-            if target.is_none() {
-                self.save_unknown_pid_locked(&pid);
-            } else {
-                self.start_profiling_locked(&pid, target.unwrap());
+        if let Ok(mut target_finder) = self.target_finder.lock() {
+            let target = target_finder.find_target(&pid);
+            info!("pid exec request: {}", pid);
+            {
+                let _ = self.mutex.lock().unwrap();
+                if self.pids.dead.contains_key(&pid) {
+                    info!("pid exec request for dead pid: {}", pid);
+                    return Ok(());
+                }
+                if target.is_none() {
+                    self.save_unknown_pid_locked(&pid);
+                } else {
+                    self.start_profiling_locked(&pid, target.unwrap());
+                }
             }
         }
         Ok(())
@@ -370,12 +376,18 @@ impl Session<'_> {
         } else {
             "__arm64_"
         };
-        let binding = self.bpf.progs();
+
+        let disassociate_ctty = "disassociate_ctty";
+        let sys_execve = format!("{}{}", arch_sys, "sys_execve");
+        let sys_execveat = format!("{}{}", arch_sys, "sys_execveat");
+
+        let progs = self.bpf.progs();
         let hooks = [
-            ("disassociate_ctty", &self.bpf.progs().disassociate_ctty(), true),
-            (format!("{}{}", arch_sys, "sys_execve").as_str(), &binding.exec(), false),
-            (format!("{}{}", arch_sys, "sys_execveat").as_str(), &binding.exec(), false),
+            (disassociate_ctty, progs.disassociate_ctty(), true),
+            (sys_execve.as_str(), &progs.exec(), false),
+            (sys_execveat.as_str(), &progs.exec(), false),
         ];
+
         for (kprobe, mut prog, required) in &hooks {
             match prog.attach_kprobe(false, prog.name()) {
                 Ok(kp) => self.kprobes.push(kp),
@@ -495,11 +507,14 @@ impl Session<'_> {
         Ok(())
     }
 
-    pub fn debug_info(&self) -> SessionDebugInfo {
-        SessionDebugInfo {
-            elf_cache: self.sym_cache.elf_cache_debug_info(),
-            pid_cache: self.sym_cache.pid_cache_debug_info()
+    pub fn debug_info(&mut self) -> Option<SessionDebugInfo> {
+        if let Ok(mut sym_cache) = self.sym_cache.lock() {
+            return Some(SessionDebugInfo {
+                elf_cache: sym_cache.elf_cache_debug_info(),
+                pid_cache: sym_cache.pid_cache_debug_info()
+            })
         }
+        None
     }
 
     fn collect_regular_profile<F>(&mut self, cb: F) -> Result<()> where F: Fn(ProfileSample) {
@@ -516,37 +531,41 @@ impl Session<'_> {
             if ck.kern_stack >= 0 {
                 known_stacks.insert(ck.kern_stack as u32, true);
             }
-            if let Some(labels) = self.target_finder.get_mut().find_target(&ck.pid) {
-                if self.pids.dead.contains_key(&ck.pid) {
-                    continue;
-                }
-                if let Some(mut proc) = self.sym_cache.borrow_mut().get_proc_table(ck.pid) {
-                    let u_stack = self.get_stack(ck.user_stack).unwrap();
-                    let k_stack = self.get_stack(ck.kern_stack).unwrap();
-                    let mut stats = StackResolveStats::default();
-                    sb.reset();
-                    sb.append(self.comm(ck.pid));
-                    if self.options.collect_user {
-                        self.walk_stack(&mut sb, &u_stack, proc, &mut stats);
+
+            if let Ok(mut target_finder) = self.target_finder.lock() {
+                if let Some(labels) = target_finder.find_target(&ck.pid) {
+                    if self.pids.dead.contains_key(&ck.pid) {
+                        continue;
                     }
-                    if self.options.collect_kernel {
-                        let mut a = self.sym_cache.get_kallsyms();
-                        self.walk_stack(&mut sb, &k_stack, a, &mut stats);
+                    let mut sym_cache = self.sym_cache.lock().unwrap();
+                    if let Some(mut proc) = sym_cache.borrow_mut().get_proc_table(ck.pid) {
+                        let u_stack = self.get_stack(ck.user_stack).unwrap();
+                        let k_stack = self.get_stack(ck.kern_stack).unwrap();
+                        let mut stats = StackResolveStats::default();
+                        sb.reset();
+                        sb.append(self.comm(ck.pid));
+                        if self.options.collect_user {
+                            self.walk_stack(&mut sb, &u_stack, proc, &mut stats);
+                        }
+                        if self.options.collect_kernel {
+                            let mut a = sym_cache.get_kallsyms();
+                            self.walk_stack(&mut sb, &k_stack, a, &mut stats);
+                        }
+                        if sb.stack.len() > 1 {
+                            cb(ProfileSample {
+                                target: &labels,
+                                pid: ck.pid,
+                                sample_type: SampleType::Cpu,
+                                aggregation: true,
+                                stack: sb.stack.clone(),
+                                value: value as u64,
+                                value2: 0,
+                            });
+                            self.collect_metrics(&labels, &stats, &sb);
+                        }
+                    } else {
+                        self.pids.dead.insert(ck.pid, ());
                     }
-                    if sb.stack.len() > 1 {
-                        cb(ProfileSample{
-                            target: &labels,
-                            pid: ck.pid,
-                            sample_type: SampleType::Cpu,
-                            aggregation: true,
-                            stack: sb.stack.clone(),
-                            value: value as u64,
-                            value2: 0,
-                        });
-                        self.collect_metrics(&labels, &stats, &sb);
-                    }
-                } else {
-                    self.pids.dead.insert(ck.pid, ());
                 }
             }
         }
@@ -631,7 +650,9 @@ impl Session<'_> {
     }
 
     fn cleanup(&mut self) {
-        self.sym_cache.cleanup();
+
+        let mut sym_cache = self.sym_cache.lock().unwrap();
+        sym_cache.cleanup();
 
         let mut dead_pids_to_remove = HashSet::new();
         for pid in self.pids.dead.keys() {
@@ -643,9 +664,12 @@ impl Session<'_> {
             self.pids.dead.remove(pid);
             self.pids.unknown.remove(pid);
             self.pids.all.remove(pid);
-            self.sym_cache.remove_dead_pid(pid);
+            sym_cache.remove_dead_pid(pid);
             self.bpf.maps().pids().delete(&pid.to_le_bytes()).unwrap();
-            self.target_finder.get_mut().remove_dead_pid(pid);
+
+            if let Ok(mut target_finder) = self.target_finder.lock() {
+                target_finder.remove_dead_pid(pid);
+            }
         }
 
         let mut unknown_pids_to_remove = HashSet::new();

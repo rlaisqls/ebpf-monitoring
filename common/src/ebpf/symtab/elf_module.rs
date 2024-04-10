@@ -122,7 +122,7 @@ impl ElfTable<'_> {
                 }
             };
 
-            let symbols = Arc::new(match self.create_symbol_table(debug_me) {
+            let symbols = Arc::new(match create_symbol_table(debug_me) {
                 Ok(sym) => sym,
                 Err(err) => {
                     self.on_load_error(err);
@@ -134,7 +134,7 @@ impl ElfTable<'_> {
             return;
         }
 
-        let symbols = Arc::new(match self.create_symbol_table(me) {
+        let symbols = Arc::new(match create_symbol_table(me) {
             Ok(sym) => sym,
             Err(_err) => {
                 return;
@@ -166,10 +166,10 @@ impl ElfTable<'_> {
     }
 
     fn on_load_error(&mut self, err: crate::error::Error) {
-        self.err = Option::from(err);
         info!("failed to load elf table err: {}, f: {}, fs: {}",
             &err.to_string(), &self.proc_map.pathname.to_string(), &self.fs.to_string());
         self.options.metrics.elf_errors.with_label_values(&[&err.to_string()]).inc();
+        self.err = Option::from(err);
     }
 
     fn find_debug_file(&self, build_id: &BuildID, elf_file: &mut MappedElfFile) -> Option<String> {
@@ -200,14 +200,14 @@ impl ElfTable<'_> {
 
     fn find_debug_file_with_debug_link(&self, elf_file: &mut MappedElfFile) -> Option<String> {
         let elf_file_path = Path::new(&self.proc_map.pathname);
-        let debug_link_section = elf_file.section(".gnu_debuglink").unwrap();
-        let data = elf_file.section_data(debug_link_section).unwrap();
+        let data = elf_file.section_data_by_section_name(".gnu_debuglink").unwrap();
 
         if data.len() < 6 {
             return None;
         }
 
-        let debug_link = String::from_utf8_lossy(&data[..data.len() - 4]).as_str().unwrap();
+        let raw_link = String::from_utf8_lossy(&data[..data.len() - 4]);
+        let debug_link = raw_link.as_str().unwrap();
 
         let mut check_debug_file = |subdir: &str| -> Option<String> {
             let fs_debug_file = elf_file_path.with_file_name(subdir).join(&debug_link);
@@ -228,15 +228,6 @@ impl ElfTable<'_> {
         }
 
         None
-    }
-
-    fn create_symbol_table(&self, mut me: MappedElfFile) -> Result<SymbolNameTable> {
-        match new_symbol_table(me) {
-            Ok(table) => Ok(table),
-            Err(sym_err) => {
-                return Err(sym_err);
-            }
-        }
     }
 
     pub(crate) fn resolve(&mut self, mut pc: u64) -> Option<String> {
@@ -268,6 +259,15 @@ impl ElfTable<'_> {
 
     pub fn cleanup(&mut self) {
         self.table.cleanup();
+    }
+}
+
+fn create_symbol_table(mut me: MappedElfFile) -> Result<SymbolNameTable> {
+    match new_symbol_table(me) {
+        Ok(table) => Ok(table),
+        Err(sym_err) => {
+            return Err(sym_err);
+        }
     }
 }
 
