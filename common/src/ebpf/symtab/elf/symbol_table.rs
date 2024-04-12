@@ -40,19 +40,19 @@ pub struct FlatSymbolIndex {
     pub(crate) values: PCIndex
 }
 
-pub struct SymbolNameTable<'a> {
+pub struct SymbolNameTable {
     pub(crate) index: FlatSymbolIndex,
-    pub(crate) file: MappedElfFile<'a>
+    pub(crate) file: MappedElfFile
 }
 
-impl Resource for SymbolNameTable<'_> {
+impl Resource for SymbolNameTable {
     fn refresh(&mut self) {}
     fn cleanup(&mut self) {
         self.file.close();
     }
 }
 
-impl SymbolNameResolver for SymbolNameTable<'_> {
+impl SymbolNameResolver for SymbolNameTable {
 
     fn refresh(&mut self) {}
     fn cleanup(&mut self) {
@@ -86,7 +86,7 @@ impl SymbolNameResolver for SymbolNameTable<'_> {
     }
 }
 
-impl SymbolNameTable<'_> {
+impl SymbolNameTable {
 
     fn size(&self) -> usize {
         self.index.names.len()

@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use byteorder::ReadBytesExt;
 use gimli::LittleEndian;
-use libbpf_rs::{Error, libbpf_sys, Link, Map, MapFlags, MapHandle};
+use libbpf_rs::{Error, libbpf_sys, Link, Map, MapFlags, MapHandle, Program};
 use libbpf_rs::libbpf_sys::{bpf_map_batch_opts, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use libbpf_sys::{__u32, bpf_map_lookup_batch, bpf_map_lookup_elem};
@@ -87,10 +87,10 @@ pub struct SessionDebugInfo {
 
 pub struct Session<'a> {
     pub target_finder: Arc<Mutex<TargetFinder>>,
-    sym_cache: Arc<Mutex<SymbolCache<'a>>>,
+    sym_cache: Arc<Mutex<SymbolCache>>,
     bpf: ProfileSkel<'a>,
 
-    events_reader: Option<Arc<Reader>>,
+    events_reader: Option<Arc<Mutex<Reader>>>,
     pid_info_requests: Option<Receiver<u32>>,
     dead_pid_events: Option<Receiver<u32>>,
     pid_exec_requests: Option<Receiver<u32>>,
@@ -118,10 +118,9 @@ impl SamplesCollector for Session<'_> {
         if let Ok(mut sym_cache) = self.sym_cache.lock() {
             sym_cache.next_round();
             self.round_number += 1;
-
-            self.collect_regular_profile(callback).unwrap();
-            self.cleanup();
         }
+        self.collect_regular_profile(callback).unwrap();
+        self.cleanup();
         Ok(())
     }
 }
@@ -170,7 +169,7 @@ impl Session<'_> {
             self.stop_locked();
             return Err(SessionError(err));
         }
-        self.events_reader = Some(Arc::new(events_reader));
+        self.events_reader = Some(Arc::new(Mutex::new(events_reader)));
 
         let (pid_info_request_tx, pid_info_request_rx) = channel::<u32>();
         let (pid_exec_request_tx, pid_exec_request_rx) = channel::<u32>();
@@ -205,23 +204,30 @@ impl Session<'_> {
     }
 
     pub fn update_targets(&mut self, args: TargetsOptions) {
-        if let Ok(mut target_finder) = self.target_finder.lock() {
+        let mut targets = Vec::new();
+        {
+            let mut target_finder = self.target_finder.lock().unwrap();
             target_finder.update(args);
-            for pid in self.pids.unknown.iter_mut() {
-                let target = target_finder.find_target(pid.0);
+            for p in self.pids.unknown.iter() {
+                let pp = p.0;
+                let pid = pp.clone();
+                let target = target_finder.find_target(&pid);
                 if let Some(target) = target {
-                    self.start_profiling_locked(pid.0, target);
-                    self.pids.unknown.remove(pid.0);
+                    targets.push((target.clone(), pid));
                 }
             }
         }
+        targets.iter_mut().for_each(|(t, p)| {
+            self.start_profiling_locked(&p, t);
+            self.pids.unknown.remove(p);
+        });
     }
 
-    fn start_profiling_locked(&mut self, pid: &u32, target: Target) {
+    fn start_profiling_locked(&mut self, pid: &u32, target: &Target) {
         if !self.started {
             return;
         }
-        let typ = self.select_profiling_type(pid.clone(), &target);
+        let typ = self.select_profiling_type(pid.clone(), target);
         // if typ.typ == ProfilingType::Python {
         //     self.try_start_python_profiling(pid, target, typ)
         // }
@@ -229,13 +235,13 @@ impl Session<'_> {
     }
 
     fn set_pid_config(&mut self, pid: u32, pi: ProcInfoLite, collect_user: bool, collect_kernel: bool) {
-        self.pids.all.insert(pid, pi);
         let config = pid_config {
-            profile_type: pi.typ.to_u8(),
+            profile_type: pi.typ.to_u8().clone(),
             collect_user: collect_user as u8,
             collect_kernel: collect_kernel as u8,
             padding_: 0,
         };
+        self.pids.all.insert(pid, pi);
 
         if let Err(err) = self.bpf.maps().pids()
             .update(&pid.to_ne_bytes(), any_as_u8_slice(&config), MapFlags::ANY)
@@ -268,7 +274,7 @@ impl Session<'_> {
 
     fn read_events(&mut self) {
         loop {
-            match self.events_reader.take().unwrap().read() {
+            match self.events_reader.take().unwrap().lock().unwrap().read() {
                 Ok(record) => {
                     if record.lost_samples != 0 {
                         error!(
@@ -321,21 +327,23 @@ impl Session<'_> {
     }
 
     fn process_pid_info_requests(&mut self, pid: u32) -> Result<()> {
-        if let Ok(mut target_finder) = self.target_finder.lock() {
-            let target = target_finder.find_target(&pid);
+
+        let already_dead = self.pids.dead.contains_key(&pid);
+        if already_dead {
+            debug!("pid info request for dead pid: {}", pid);
+            return Ok(());
+        }
+
+        let target = {
+            let target_finder = self.target_finder.lock().unwrap();
+            target_finder.find_target(&pid)
+        };
+
+        if target.is_none() {
+            self.save_unknown_pid_locked(&pid);
+        } else {
             debug!("pid info request: pid={}, target={:?}", pid, target);
-
-            let already_dead = self.pids.dead.contains_key(&pid);
-            if already_dead {
-                debug!("pid info request for dead pid: {}", pid);
-                return Ok(());
-            }
-
-            if target.is_none() {
-                self.save_unknown_pid_locked(&pid);
-            } else {
-                self.start_profiling_locked(&pid, target.unwrap());
-            }
+            self.start_profiling_locked(&pid, &target.unwrap());
         }
         Ok(())
     }
@@ -351,21 +359,22 @@ impl Session<'_> {
     }
 
     fn process_pid_exec_requests(&mut self, pid: u32) -> Result<()> {
-        if let Ok(mut target_finder) = self.target_finder.lock() {
-            let target = target_finder.find_target(&pid);
-            info!("pid exec request: {}", pid);
-            {
-                let _ = self.mutex.lock().unwrap();
-                if self.pids.dead.contains_key(&pid) {
-                    info!("pid exec request for dead pid: {}", pid);
-                    return Ok(());
-                }
-                if target.is_none() {
-                    self.save_unknown_pid_locked(&pid);
-                } else {
-                    self.start_profiling_locked(&pid, target.unwrap());
-                }
-            }
+        let already_dead = self.pids.dead.contains_key(&pid);
+        if already_dead {
+            debug!("pid info request for dead pid: {}", pid);
+            return Ok(());
+        }
+
+        let target = {
+            let target_finder = self.target_finder.lock().unwrap();
+            target_finder.find_target(&pid)
+        };
+
+        if target.is_none() {
+            self.save_unknown_pid_locked(&pid);
+        } else {
+            debug!("pid exec request: pid={}, target={:?}", pid, target);
+            self.start_profiling_locked(&pid, &target.unwrap());
         }
         Ok(())
     }
@@ -377,24 +386,29 @@ impl Session<'_> {
             "__arm64_"
         };
 
+        let mut progs = self.bpf.progs_mut();
+
         let disassociate_ctty = "disassociate_ctty";
+        let mut p = progs.disassociate_ctty();
+        match p.attach_kprobe(false, disassociate_ctty) {
+            Ok(kp) => self.kprobes.push(kp),
+            Err(err) => {
+                return Err(format!("link kprobe {}: {}", disassociate_ctty, err));
+            }
+        }
+
         let sys_execve = format!("{}{}", arch_sys, "sys_execve");
         let sys_execveat = format!("{}{}", arch_sys, "sys_execveat");
-
-        let progs = self.bpf.progs();
-        let hooks = [
-            (disassociate_ctty, progs.disassociate_ctty(), true),
-            (sys_execve.as_str(), &progs.exec(), false),
-            (sys_execveat.as_str(), &progs.exec(), false),
+        let mut hooks = [
+            sys_execve.as_str(),
+            sys_execveat.as_str(),
         ];
 
-        for (kprobe, mut prog, required) in &hooks {
-            match prog.attach_kprobe(false, prog.name()) {
+        for kprobe in hooks {
+            let mut p = progs.exec();
+            match p.attach_kprobe(false, kprobe) {
                 Ok(kp) => self.kprobes.push(kp),
                 Err(err) => {
-                    if *required {
-                        return Err(format!("link kprobe {}: {}", kprobe, err));
-                    }
                     error!("link kprobe kprobe: {}, err: {}", kprobe, err);
                 }
             }
@@ -532,45 +546,52 @@ impl Session<'_> {
                 known_stacks.insert(ck.kern_stack as u32, true);
             }
 
-            if let Ok(mut target_finder) = self.target_finder.lock() {
-                if let Some(labels) = target_finder.find_target(&ck.pid) {
-                    if self.pids.dead.contains_key(&ck.pid) {
-                        continue;
+            let mut target_finder = self.target_finder.lock().unwrap();
+            if let Some(labels) = target_finder.find_target(&ck.pid) {
+                if self.pids.dead.contains_key(&ck.pid) {
+                    continue;
+                }
+                let mut stats = StackResolveStats::default();
+                {
+                    let mut proc = {
+                        let mut sym_cache = self.sym_cache.lock().unwrap();
+                        if sym_cache.get_proc_table(ck.pid).is_none() {
+                            self.pids.dead.insert(ck.pid, ());
+                        }
+                        sym_cache.get_proc_table(ck.pid).unwrap().clone()
+                    };
+
+                    let u_stack = self.get_stack(ck.user_stack).unwrap();
+                    let k_stack = self.get_stack(ck.kern_stack).unwrap();
+                    sb.reset();
+                    sb.append(self.comm(ck.pid));
+
+                    if self.options.collect_user {
+                        self.walk_stack(&mut sb, &u_stack, proc, &mut stats);
                     }
-                    let mut sym_cache = self.sym_cache.lock().unwrap();
-                    if let Some(mut proc) = sym_cache.borrow_mut().get_proc_table(ck.pid) {
-                        let u_stack = self.get_stack(ck.user_stack).unwrap();
-                        let k_stack = self.get_stack(ck.kern_stack).unwrap();
-                        let mut stats = StackResolveStats::default();
-                        sb.reset();
-                        sb.append(self.comm(ck.pid));
-                        if self.options.collect_user {
-                            self.walk_stack(&mut sb, &u_stack, proc, &mut stats);
-                        }
-                        if self.options.collect_kernel {
-                            let mut a = sym_cache.get_kallsyms();
-                            self.walk_stack(&mut sb, &k_stack, a, &mut stats);
-                        }
-                        if sb.stack.len() > 1 {
-                            cb(ProfileSample {
-                                target: &labels,
-                                pid: ck.pid,
-                                sample_type: SampleType::Cpu,
-                                aggregation: true,
-                                stack: sb.stack.clone(),
-                                value: value as u64,
-                                value2: 0,
-                            });
-                            self.collect_metrics(&labels, &stats, &sb);
-                        }
-                    } else {
-                        self.pids.dead.insert(ck.pid, ());
+                    if self.options.collect_kernel {
+                        let mut sym_cache = self.sym_cache.lock().unwrap();
+                        let a = sym_cache.get_kallsyms().clone();
+                        self.walk_stack(&mut sb, &k_stack, a, &mut stats);
                     }
+                }
+                if sb.stack.len() > 1 {
+                    cb(ProfileSample {
+                        target: &labels,
+                        pid: ck.pid,
+                        sample_type: SampleType::Cpu,
+                        aggregation: true,
+                        stack: sb.stack.clone(),
+                        value: value as u64,
+                        value2: 0,
+                    });
+                    self.collect_metrics(&labels, &stats, &sb);
                 }
             }
         }
         self.clear_counts_map(&keys, batch).unwrap();
-        Ok(self.clear_stacks_map(&known_stacks).unwrap())
+        self.clear_stacks_map(&known_stacks).unwrap();
+        Ok(())
     }
 
     fn comm(&self, pid: u32) -> String {
@@ -696,15 +717,16 @@ impl Session<'_> {
     }
 
     fn check_stale_pids(&self) {
-        let m = &self.bpf.maps().pids();
-        let map_size = m.info().unwrap().info.max_entries as usize;
+        let m = &self.bpf.maps();
+        let pids = m.pids();
+        let map_size = pids.info().unwrap().info.max_entries as usize;
         let mut nkey = 0u32;
         let mut keys: Vec<u32> = Vec::with_capacity(map_size);
         let mut values: Vec<pid_config> = Vec::with_capacity(map_size);
         let mut count: u32 = 10;
         unsafe {
             let n = bpf_map_lookup_batch(
-                m.as_fd().as_raw_fd(),
+                pids.as_fd().as_raw_fd(),
                 std::ptr::null_mut(),
                 nkey as *mut _,
                 keys.as_mut_ptr() as *mut c_void,
@@ -721,7 +743,7 @@ impl Session<'_> {
             for i in 0..n {
                 if let Err(err) = fs::metadata(format!("/proc/{}/status", keys[i as usize] as __u32)) {
                     if err.kind() == std::io::ErrorKind::NotFound {
-                        if let Err(_del_err) = m.delete(&keys[i as usize].to_le_bytes()) {
+                        if let Err(_del_err) = pids.delete(&keys[i as usize].to_le_bytes()) {
                             error!("delete stale pid pid");
                         } else {
                             dbg!("stale pid deleted pid");
@@ -764,11 +786,10 @@ fn attach_perf_events(sample_rate: u32, link: &Link) -> Result<Vec<PerfEvent>> {
     let mut perf_events = Vec::new();
     for cpu in cpus {
         let mut pe = PerfEvent::new(cpu as i32, sample_rate as u64)?;
-        perf_events.push(pe);
-
         if let Err(err) = pe.attach_perf_event(link) {
             return Err(InvalidData(format!("{:?}", err)));
         }
+        perf_events.push(pe);
     }
     Ok(perf_events)
 }

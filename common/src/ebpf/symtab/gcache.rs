@@ -59,10 +59,12 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
 
     pub fn cache(&mut self, k: K, v: Arc<Mutex<V>>) {
         let mut e = Entry { v, round: self.round };
-        let mut value = e.v.lock().unwrap();
-        value.refresh();
+        {
+            let mut value = e.v.lock().unwrap();
+            value.refresh();
+        }
         let mut entry = Arc::new(Mutex::new(e));
-        self.lru_cache.put(k.clone(), entry);
+        self.lru_cache.put(k.clone(), entry.clone());
         self.round_cache.insert(k, entry.clone());
     }
 
@@ -107,14 +109,14 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
         self.round_cache.remove(k);
     }
 
-    pub fn each_lru(&self, f: impl Fn(&K, &Arc<Mutex<V>>, i32)) {
+    pub fn each_lru(&self, mut f: impl FnMut(&K, &Arc<Mutex<V>>, i32)) {
         for (k, e) in self.lru_cache.iter() {
             let entry = e.lock().unwrap();
             f(k, &entry.v, entry.round);
         }
     }
 
-    pub fn each_round(&self, f: impl Fn(&K, &Arc<Mutex<V>>, i32)) {
+    pub fn each_round(&self, mut f: impl FnMut(&K, &Arc<Mutex<V>>, i32)) {
         for (k, e) in &self.round_cache {
             let entry = e.lock().unwrap();
             f(k, &entry.v, entry.round);
@@ -172,12 +174,11 @@ pub fn debug_info<K, V, D>(g: &GCache<K, V>, ff: fn(&K, &Arc<Mutex<V>>, i32) -> 
         lru_dump: Vec::with_capacity(g.lru_size()),
         round_dump: Vec::with_capacity(g.round_size()),
     };
-    g.each_lru(|k: &K, v: &Arc<Mutex<V>>, round: i32| {
+    g.each_lru(move |k: &K, v: &Arc<Mutex<V>>, round: i32| {
         res.lru_dump.push(ff(k, v, round));
     });
-    g.each_round(|k: &K, v: &Arc<Mutex<V>>, round: i32| {
+    g.each_round(move |k: &K, v: &Arc<Mutex<V>>, round: i32| {
         res.round_dump.push(ff(k, v, round));
     });
-
     res
 }

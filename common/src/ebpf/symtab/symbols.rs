@@ -18,9 +18,9 @@ pub type PidKey = u32;
 // SymbolCache is responsible for resolving PC address to Symbol
 // maintaining a pid -> ProcTable cache
 // resolving kernel symbols
-pub struct SymbolCache<'a> {
-    pid_cache: GCache<PidKey, ProcTable<'a>>,
-    elf_cache: Arc<ElfCache<'a>>,
+pub struct SymbolCache {
+    pid_cache: GCache<PidKey, ProcTable>,
+    elf_cache: Arc<ElfCache>,
     kallsyms: Option<Arc<Mutex<SymbolTab>>>,
     options: CacheOptions,
     metrics: Arc<SymtabMetrics>,
@@ -34,7 +34,7 @@ pub struct CacheOptions {
     pub symbol_options: SymbolOptions,
 }
 
-impl<'a> SymbolCache<'a> {
+impl SymbolCache {
     pub fn new(options: CacheOptions, metrics: &SymtabMetrics) -> Result<Self> {
         // if metrics.is_none() {
         //     panic!("metrics is nil");
@@ -74,7 +74,7 @@ impl<'a> SymbolCache<'a> {
                 symbol_options: self.options.symbol_options,
             },
         )));
-        self.pid_cache.cache(pid, fresh);
+        self.pid_cache.cache(pid, fresh.clone());
         Some(fresh.clone())
     }
 
@@ -96,7 +96,7 @@ impl<'a> SymbolCache<'a> {
         }
 
         let ks = Arc::new(Mutex::new(kallsyms));
-        self.kallsyms = Some(ks);
+        self.kallsyms = Some(ks.clone());
         ks.clone()
     }
 

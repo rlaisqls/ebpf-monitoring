@@ -8,12 +8,12 @@ use crate::ebpf::symtab::gcache::{debug_info, GCache, GCacheDebugInfo, GCacheOpt
 use crate::ebpf::symtab::stat::Stat;
 use crate::ebpf::symtab::symtab::SymbolNameResolver;
 
-pub struct ElfCache<'a> {
-    build_id_cache: Mutex<GCache<BuildID, SymbolNameTable<'a>>>,
-    same_file_cache: Mutex<GCache<Stat, SymbolNameTable<'a>>>,
+pub struct ElfCache {
+    build_id_cache: Mutex<GCache<BuildID, SymbolNameTable>>,
+    same_file_cache: Mutex<GCache<Stat, SymbolNameTable>>,
 }
 
-impl<'a> ElfCache<'a> {
+impl ElfCache {
     pub fn new(build_id_cache_options: GCacheOptions, same_file_cache_options: GCacheOptions) -> Result<Self> {
         let build_id_cache = Mutex::new(GCache::<BuildID, SymbolNameTable>::new(build_id_cache_options));
         let same_file_cache = Mutex::new(GCache::<Stat, SymbolNameTable>::new(same_file_cache_options));
@@ -22,16 +22,18 @@ impl<'a> ElfCache<'a> {
 
     pub fn get_symbols_by_build_id(&self, build_id: &BuildID) -> Option<Arc<Mutex<SymbolNameTable>>> {
         let res = self.build_id_cache.lock().unwrap().get(build_id).unwrap();
-        let sym_tab = res.lock().unwrap();
-        if sym_tab.is_dead() {
-            self.build_id_cache.lock().unwrap().remove(build_id);
-            return None;
+        {
+            let sym_tab = res.lock().unwrap();
+            if sym_tab.is_dead() {
+                self.build_id_cache.lock().unwrap().remove(build_id);
+                return None;
+            }
         }
         Some(res)
     }
 
     pub fn cache_by_build_id(&self, build_id: BuildID, v: Arc<Mutex<SymbolNameTable>>) {
-        self.build_id_cache.lock().unwrap().cache(build_id, v);
+        self.build_id_cache.lock().unwrap().cache(build_id, v.clone());
     }
 
     pub fn get_symbols_by_stat(&self, s: Stat) -> Option<Arc<Mutex<SymbolNameTable>>> {
@@ -40,16 +42,18 @@ impl<'a> ElfCache<'a> {
             return None
         }
         let st = res.unwrap();
-        let sym_tab = st.lock().unwrap();
-        if sym_tab.is_dead() {
-            self.same_file_cache.lock().unwrap().remove(&s);
-            return None;
+        {
+            let sym_tab = st.lock().unwrap();
+            if sym_tab.is_dead() {
+                self.same_file_cache.lock().unwrap().remove(&s);
+                return None;
+            }
         }
         Some(st)
     }
 
     pub fn cache_by_stat(&self, s: Stat, v: Arc<Mutex<SymbolNameTable>>) {
-        self.same_file_cache.lock().unwrap().cache(s, v);
+        self.same_file_cache.lock().unwrap().cache(s, v.clone());
     }
 
     pub fn update(&self, build_id_cache_options: GCacheOptions, same_file_cache_options: GCacheOptions) {

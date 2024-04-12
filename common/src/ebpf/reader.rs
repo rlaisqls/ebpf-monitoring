@@ -2,7 +2,7 @@ use std::io::{self, Read};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::slice::from_raw_parts_mut;
@@ -10,7 +10,7 @@ use std::slice::from_raw_parts_mut;
 use crate::error::Error::{OSError};
 use libbpf_rs::libbpf_sys::{PERF_COUNT_SW_BPF_OUTPUT, PERF_FLAG_FD_CLOEXEC, PERF_SAMPLE_RAW, PERF_TYPE_SOFTWARE};
 use libbpf_rs::{Map, MapHandle};
-use libbpf_sys::perf_event_mmap_page;
+use libbpf_sys::{perf_event_mmap_page, ring};
 use libc::{c_int, c_void, close, MAP_FAILED, MAP_SHARED, mmap, munmap, pid_t, PROT_READ};
 use polling::Poller;
 
@@ -64,9 +64,9 @@ pub struct Reader {
     // Closing a PERF_EVENT_ARRAY removes all event fds
     // stored in it, so we keep a reference alive.
     array: MapHandle,
-    rings: Vec<Arc<PerfEventRing>>,
+    rings: Vec<Arc<Mutex<PerfEventRing>>>,
     epoll_events: Arc<polling::Events>,
-    epoll_rings: Vec<Arc<PerfEventRing>>,
+    epoll_rings: Vec<Arc<Mutex<PerfEventRing>>>,
     event_header: Vec<u8>,
 
     pause_mu: Arc<Mutex<()>>,
@@ -94,7 +94,7 @@ impl Reader {
             buffer_size = ring.size();
 
             let fd = ring.fd;
-            rings.push(Arc::new(ring));
+            rings.push(Arc::new(Mutex::new(ring)));
             pause_fds.push(fd);
             unsafe {
                 poller.add(fd, polling::Event::all(i)).unwrap();
@@ -132,7 +132,8 @@ impl Reader {
     pub(crate) fn close(&mut self) -> Result<()> {
         // self.poller.close();
         for ring in self.rings.iter_mut() {
-            ring.close();
+            let mut r = ring.lock().unwrap();
+            r.close();
         }
         self.rings.clear();
         Ok(())
@@ -160,19 +161,21 @@ impl Reader {
 
                 for event in self.epoll_events.iter() {
                     let mut ring = self.rings[event.key].clone();
+                    {
+                        // Read the current head pointer now, not every time
+                        // we read a record. This prevents a single fast producer
+                        // from keeping the reader busy.
+                        ring.lock().unwrap().load_head()
+                    }
                     self.epoll_rings.push(ring);
-
-                    // Read the current head pointer now, not every time
-                    // we read a record. This prevents a single fast producer
-                    // from keeping the reader busy.
-                    ring.load_head();
                 }
             }
 
             // Start at the last available event. The order in which we
             // process them doesn't matter, and starting at the back allows
             // resizing epollRings to keep track of processed rings.
-            match self.read_record_from_ring(rec, &mut self.epoll_rings[self.epoll_rings.len() - 1]) {
+            let len = self.epoll_rings.len().clone();
+            match self.read_record_from_ring(rec, len-1) {
                 Err(EndOfRing) => {
                     // We've emptied the current ring buffer, process
                     // the next one.
@@ -189,10 +192,11 @@ impl Reader {
         self.buffer_size
     }
 
-    pub(crate) fn read_record_from_ring(&mut self, rec: &mut Record, ring: &mut PerfEventRing) -> Result<()> {
+    pub(crate) fn read_record_from_ring(&mut self, rec: &mut Record, idx: usize) -> Result<()> {
+        let mut ring = self.epoll_rings[idx].lock().unwrap();
         ring.write_tail();
         rec.cpu = ring.cpu;
-        read_record(ring, rec, &mut self.event_header, self.overwritable).unwrap();
+        read_record(&mut ring, rec, &mut self.event_header, self.overwritable).unwrap();
         if self.overwritable {
             return Err(EndOfRing);
         }
@@ -201,10 +205,11 @@ impl Reader {
     }
 }
 
-fn read_record(rd: &mut dyn Read, rec: &mut Record, buf: &mut [u8], overwritable: bool) -> Result<()> {
+fn read_record(mut rd: &mut MutexGuard<PerfEventRing>, rec: &mut Record, buf: &mut [u8], overwritable: bool) -> Result<()> {
     // Assert that the buffer is large enough.
     let perf_event_header_size = std::mem::size_of::<PerfEventHeader>();
     let buf = &mut buf[..perf_event_header_size];
+
     if let Err(err) = rd.read_exact(buf) {
         if err.kind() == io::ErrorKind::UnexpectedEof {
             return Err(EndOfRing);
@@ -233,14 +238,14 @@ fn read_record(rd: &mut dyn Read, rec: &mut Record, buf: &mut [u8], overwritable
 }
 
 // Read lost records from the reader
-fn read_lost_records(rd: &mut dyn Read) -> Result<u64, io::Error> {
+fn read_lost_records(mut rd: &mut MutexGuard<PerfEventRing>) -> Result<u64, io::Error> {
     let mut buf = [0; 8]; // Assuming the size of struct perf_event_lost
     rd.read_exact(&mut buf).unwrap();
     Ok(u64::from_le_bytes(buf))
 }
 
 // Read raw sample from the reader
-fn read_raw_sample(rd: &mut dyn Read, overwritable: bool) -> Result<Vec<u8>, io::Error> {
+fn read_raw_sample(mut rd: &mut MutexGuard<PerfEventRing>, overwritable: bool) -> Result<Vec<u8>, io::Error> {
     let mut buf = vec![0; 4]; // Assuming the size of struct perf_event_sample
     rd.read_exact(&mut buf)?;
     let size = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
@@ -349,7 +354,13 @@ fn create_perf_event(cpu: c_int, watermark: c_int) -> Result<c_int> {
     };
 
     unsafe {
-        let fd = sys_perf_event_open(&attr, -1 as pid_t, cpu as c_int, -1 as c_int, PERF_FLAG_FD_CLOEXEC as libc::c_ulong);
+        let fd = sys_perf_event_open(
+            &attr,
+            -1 as pid_t,
+            cpu as c_int,
+            -1 as c_int,
+            PERF_FLAG_FD_CLOEXEC as libc::c_ulong
+        );
         Ok(fd.unwrap())
     }
 }

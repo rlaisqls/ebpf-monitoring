@@ -26,7 +26,7 @@ pub trait BuildIdentified {
     fn gnu_build_id(&mut self) -> Result<BuildID>;
 }
 
-impl BuildIdentified for MappedElfFile<'_> {
+impl BuildIdentified for MappedElfFile {
     fn build_id(&mut self) -> Result<BuildID> {
         let id_result = self.gnu_build_id();
         if let Ok(id) = id_result {

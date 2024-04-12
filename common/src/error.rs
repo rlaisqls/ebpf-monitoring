@@ -1,4 +1,3 @@
-use std::fmt::Display;
 use thiserror::Error;
 
 #[derive(Debug, Error, Eq, PartialEq, Ord, PartialOrd)]

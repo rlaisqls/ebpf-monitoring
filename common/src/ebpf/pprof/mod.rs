@@ -60,25 +60,28 @@ impl ProfileBuilders {
             k.pid = sample.pid;
         }
 
-        let mut b = PProfBuilder::default();
-        let from_b = |s: &str| { b.add_string(&s.to_string()) };
         self.builders.entry(k).or_insert_with(|| {
-            let (sample_type, period_type, period) = if sample.sample_type == SAMPLE_TYPE_CPU {
-                (
-                    vec![ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds"), }],
-                    ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds") },
-                    (Duration::from_secs(1).as_nanos() as i64) / self.opt.sample_rate,
-                )
-            } else {
-                (
-                    vec![
-                        ValueType { r#type: from_b("alloc_objects"), unit: from_b("count") },
-                        ValueType { r#type: from_b("alloc_space"), unit: from_b("bytes"), },
-                    ],
-                    ValueType { r#type: b.add_string(&"space".to_string()), unit: from_b("bytes") },
-                    512 * 1024,
-                )
+            let mut b = PProfBuilder::default();
+            let mut from_b = |s: &str| { b.add_string(&s.to_string()) };
+            let (sample_type, period_type, period) = {
+                if sample.sample_type == SAMPLE_TYPE_CPU {
+                    (
+                        vec![ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds"), }],
+                        ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds") },
+                        (Duration::from_secs(1).as_nanos() as i64) / self.opt.sample_rate,
+                    )
+                } else {
+                    (
+                        vec![
+                            ValueType { r#type: from_b("alloc_objects"), unit: from_b("count") },
+                            ValueType { r#type: from_b("alloc_space"), unit: from_b("bytes"), },
+                        ],
+                        ValueType { r#type: from_b("space"), unit: from_b("bytes") },
+                        512 * 1024,
+                    )
+                }
             };
+
             ProfileBuilder {
                 labels: labels.clone(),
                 profile: Profile {
@@ -87,7 +90,7 @@ impl ProfileBuilders {
                         .duration_since(UNIX_EPOCH)
                         .expect("Time went backwards")
                         .as_nanos() as i64,
-                    duration_nanos: period as i64,
+                    duration_nanos: period,
                     period_type: Some(period_type),
                     ..Default::default()
                 },
@@ -172,12 +175,22 @@ impl ProfileBuilder {
         let h = hasher.finish();
 
         if let Some(sample) = self.sample_hash_to_sample.get_mut(&h) {
-            self.add_value(input_sample, sample);
+            if input_sample.sample_type == SampleType::Cpu {
+                sample.value[0] += (input_sample.value as i64) * self.profile.period;
+            } else {
+                sample.value[0] += input_sample.value as i64;
+                sample.value[1] += input_sample.value2 as i64;
+            }
             return;
         }
 
         let mut sample = self.new_sample(input_sample);
-        self.add_value(input_sample, &mut sample);
+        if input_sample.sample_type == SampleType::Cpu {
+            sample.value[0] += (input_sample.value as i64) * self.profile.period;
+        } else {
+            sample.value[0] += input_sample.value as i64;
+            sample.value[1] += input_sample.value2 as i64;
+        }
         sample.location_id.copy_from_slice(&self.tmp_location_ids);
         self.sample_hash_to_sample.insert(h, sample.clone());
         self.profile.sample.push(sample);
@@ -192,15 +205,6 @@ impl ProfileBuilder {
         }
         sample.location_id = vec![0; input_sample.stack.len()];
         sample
-    }
-
-    fn add_value(&self, input_sample: &ProfileSample, sample: &mut Sample) {
-        if input_sample.sample_type == SampleType::Cpu {
-            sample.value[0] += (input_sample.value as i64) * self.profile.period;
-        } else {
-            sample.value[0] += input_sample.value as i64;
-            sample.value[1] += input_sample.value2 as i64;
-        }
     }
 
     fn add_location(&mut self, function: &str) -> Location {

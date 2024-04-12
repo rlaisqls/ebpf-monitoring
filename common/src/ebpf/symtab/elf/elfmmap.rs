@@ -1,11 +1,11 @@
+use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use std::borrow::BorrowMut;
 
 use byteorder::{ByteOrder, LittleEndian};
-use goblin::elf::{Elf, SectionHeader};
+use goblin::elf::{Elf, Header, ProgramHeaders, SectionHeader, SectionHeaders};
 use goblin::elf::header::{EI_CLASS, ELFCLASS32, ELFCLASS64};
 use goblin::elf::section_header::{SHT_DYNSYM, SHT_SYMTAB};
 use goblin::elf::sym::{STT_FUNC, sym32, sym64};
@@ -17,14 +17,14 @@ use crate::error::Error::{NotFound, SymbolError};
 use crate::error::Result;
 
 #[derive(Debug)]
-pub struct MappedElfFile<'a> {
-    pub elf: Elf<'a>,
-
+pub struct MappedElfFile {
+    pub header: Header,
+    pub program_headers: ProgramHeaders,
+    pub section_headers: SectionHeaders,
+    pub strtab: HashMap<usize, String>,
     pub fpath: PathBuf,
     pub fd: Option<File>,
-
-    pub string_cache: HashMap<usize, String>,
-    pub buffer: Vec<u8>,
+    pub string_cache: HashMap<usize, String>
 }
 
 #[derive(Debug)]
@@ -33,28 +33,35 @@ pub struct SymbolsOptions {
     filter_to: u64,
 }
 
-impl MappedElfFile<'_> {
+impl MappedElfFile {
     pub fn new(fpath: PathBuf) -> Result<Self> {
         let mut fd = Some(File::open(&fpath).unwrap());
         let mut buffer = Vec::new();
         fd.as_ref().borrow_mut().unwrap().read_to_end(&mut buffer).unwrap();
         let elf = Elf::parse(buffer.as_slice()).unwrap();
+
+        let strtab = elf.section_headers.iter()
+            .map(|s| (s.sh_name, elf.shdr_strtab.get_at(s.sh_name).unwrap().to_string()))
+            .collect::<HashMap<usize, String>>();
+
         Ok(Self {
+            header: elf.header,
+            program_headers: elf.program_headers,
+            section_headers: elf.section_headers,
+            strtab,
             fpath,
             fd,
-            elf,
-            buffer,
             string_cache: HashMap::new(),
         })
     }
 
     pub fn section(&self, name: &str) -> Option<&SectionHeader> {
-        self.elf.section_headers.iter()
-            .find(|s| self.elf.shdr_strtab.get_at(s.sh_name) == Some(name))
+        self.section_headers.iter()
+            .find(|s| self.strtab.get(&s.sh_name) == Some(&name.to_string()))
     }
 
     fn section_by_type(&self, typ: u32) -> Option<&SectionHeader> {
-        self.elf.section_headers.iter()
+        self.section_headers.iter()
             .find(|s| s.sh_type == typ)
     }
 
@@ -65,9 +72,10 @@ impl MappedElfFile<'_> {
     }
 
     pub(crate) fn section_data_by_section_name(&mut self, name: &str) -> Result<Vec<u8>> {
-        let section = match self.elf.section_headers.iter().find(|s| self.elf.shdr_strtab.get_at(s.sh_name) == Some(name)) {
+        let section = match self.section_headers
+            .iter().find(|s| self.strtab.get(&s.sh_name) == Some(&name.to_string())) {
             Some(section) => section,
-            None => return Err(NotFound("".to_string()))
+            None => return Err(NotFound("section_data_by_section_name".to_string()))
         };
         let mut res = vec![0; section.sh_size as usize];
         let mut fd = self.fd.borrow_mut().as_ref().unwrap();
@@ -78,7 +86,7 @@ impl MappedElfFile<'_> {
     }
 
     pub(crate) fn section_data(&mut self, typ: u32) -> Result<(Vec<u8>, &SectionHeader)> {
-        let section = match self.elf.section_headers.iter().find(|s| s.sh_type == typ) {
+        let section = match self.section_headers.iter().find(|s| s.sh_type == typ) {
             Some(section) => section,
             None => return Err(SymbolError("No symbol section".to_string())),
         };
@@ -119,11 +127,11 @@ impl MappedElfFile<'_> {
     pub(crate) fn close(&mut self) {
         self.fd = None;
         self.string_cache.clear();
-        self.elf.section_headers.clear();
+        self.section_headers.clear();
     }
 
     fn get_symbols(&mut self, typ: u32) -> Result<(Vec<SymbolIndex>, u32)> {
-        match self.elf.header.e_ident[EI_CLASS] {
+        match self.header.e_ident[EI_CLASS] {
             ELFCLASS32 => self.get_symbols32(typ),
             ELFCLASS64 => self.get_symbols64(typ),
             class => Err(SymbolError(format!("Invalid class in Header: {}", class)))
@@ -231,8 +239,8 @@ pub(crate) fn new_symbol_table(mut elf_file: MappedElfFile) -> Result<SymbolName
     Ok(SymbolNameTable {
         index: FlatSymbolIndex {
             links: Vec::from([
-                elf_file.elf.section_headers[section_sym as usize].clone(),    // should be at 0 - SectionTypeSym
-                elf_file.elf.section_headers[section_dynsym as usize].clone()  // should be at 1 - SectionTypeDynSym
+                elf_file.section_headers[section_sym as usize].clone(),    // should be at 0 - SectionTypeSym
+                elf_file.section_headers[section_dynsym as usize].clone()  // should be at 1 - SectionTypeDynSym
             ]),
             names: Vec::new(),
             values: PCIndex::new(total)
@@ -241,7 +249,7 @@ pub(crate) fn new_symbol_table(mut elf_file: MappedElfFile) -> Result<SymbolName
     })
 }
 
-impl<'a> Drop for MappedElfFile<'a> {
+impl Drop for MappedElfFile {
     fn drop(&mut self) {
         if let Some(fd) = self.fd.take() {
             drop(fd);

@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use url::quirks::pathname;
 use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
 use crate::ebpf::symtab::elf_module::{ElfTable, ElfTableOptions};
 use crate::ebpf::symtab::procmap::{File, ProcMap};
@@ -13,15 +14,15 @@ use crate::ebpf::symtab::gcache::Resource;
 use crate::error::Error::{ProcError};
 use crate::error::Result;
 
-pub struct ProcTable<'a> {
-    ranges: Vec<Arc<ElfRange<'a>>>,
-    file_to_table: HashMap<File, ElfTable<'a>>,
+pub struct ProcTable {
+    ranges: Vec<Arc<Mutex<ElfRange>>>,
+    file_to_table: HashMap<File, Arc<Mutex<ElfTable>>>,
     root_fs: PathBuf,
     err: Option<crate::error::Error>,
     pid: i32,
-    elf_table_options: ElfTableOptions<'a>
+    elf_table_options: ElfTableOptions
 }
-unsafe impl Sync for ProcTable<'_> {}
+unsafe impl Sync for ProcTable {}
 
 pub struct ProcTableDebugInfo {
     elf_tables: HashMap<String, SymTabDebugInfo>,
@@ -30,12 +31,12 @@ pub struct ProcTableDebugInfo {
     pub(crate) last_used_round: i32,
 }
 
-pub struct ElfRange<'a> {
-    map_range: Arc<ProcMap>,
-    elf_table: Option<ElfTable<'a>>,
+pub struct ElfRange {
+    map_range: Arc<Mutex<ProcMap>>,
+    elf_table: Arc<Mutex<ElfTable>>
 }
 
-impl Resource for ProcTable<'_> {
+impl Resource for ProcTable {
     fn refresh(&mut self) {
         self.refresh()
     }
@@ -45,7 +46,7 @@ impl Resource for ProcTable<'_> {
     }
 }
 
-impl SymbolTable for ProcTable<'_> {
+impl SymbolTable for ProcTable {
     fn refresh(&mut self) {
         self.refresh()
     }
@@ -68,26 +69,28 @@ impl SymbolTable for ProcTable<'_> {
             return Some(Symbol::default());
         }
 
-        let r = &self.ranges.get_mut(i.unwrap()).unwrap();
-        if let Some(mut t) = &r.elf_table {
-            let module_offset = pc - t.base;
-            return match t.resolve(pc) {
-                Some(s) => {
-                    Some(Symbol {
-                        start: module_offset,
-                        name: s,
-                        module: r.map_range.pathname.clone(),
-                    })
-                }
-                None => {
-                    Some(Symbol {
-                        start: module_offset,
-                        name: "".to_string(),
-                        module: r.map_range.pathname.clone(),
-                    })
-                }
+        let rr = &self.ranges.get_mut(i.unwrap()).unwrap();
+        let r = rr.lock().unwrap();
+        let mut et = r.elf_table.lock().unwrap();
+        let module_offset = pc - et.base;
+        return match et.resolve(pc) {
+            Some(s) => {
+                let mr = r.map_range.lock().unwrap();
+                Some(Symbol {
+                    start: module_offset,
+                    name: s,
+                    module: mr.pathname.clone(),
+                })
             }
-        }
+            None => {
+                let mr = r.map_range.lock().unwrap();
+                Some(Symbol {
+                    start: module_offset,
+                    name: "".to_string(),
+                    module: mr.pathname.clone(),
+                })
+            }
+        };
         Some(Symbol::default())
     }
 }
@@ -114,18 +117,20 @@ fn binary_search_func<S, E, T, F>(x: &[E], target: T, mut cmp: F) -> (usize, boo
     (i, i < x.len() && cmp(&x[i], &target) == Equal)
 }
 
-fn binary_search_elf_range(e: &ElfRange, pc: u64) -> std::cmp::Ordering {
-    if pc < e.map_range.start_addr {
+fn binary_search_elf_range(e: &Arc<Mutex<ElfRange>>, pc: u64) -> std::cmp::Ordering {
+    let m = e.lock().unwrap();
+    let mr = m.map_range.lock().unwrap();
+    if pc < mr.start_addr {
         Greater
-    } else if pc >= e.map_range.end_addr {
+    } else if pc >= mr.end_addr {
         Less
     } else {
         Equal
     }
 }
 
-impl<'a> ProcTable<'a> {
-    pub(crate) fn new(pid: i32, elf_table_options: ElfTableOptions<'a>) -> Self {
+impl ProcTable {
+    pub(crate) fn new(pid: i32, elf_table_options: ElfTableOptions) -> Self {
         Self {
             ranges: Vec::new(),
             file_to_table: HashMap::new(),
@@ -160,7 +165,10 @@ impl<'a> ProcTable<'a> {
     fn cleanup(&mut self) {
         self.file_to_table
             .iter_mut()
-            .for_each(|(_, table)| table.cleanup())
+            .for_each(|(_, table)| {
+                let mut t = table.lock().unwrap();
+                t.cleanup()
+            })
     }
 
     fn refresh_proc_map(&mut self, proc_maps: String) -> Result<()> {
@@ -177,19 +185,24 @@ impl<'a> ProcTable<'a> {
         };
 
         for map in maps {
-            if let Some(_elf_table) = self.get_elf_table(map.clone()) {
-                files_to_keep.insert(map.file(), ());
-                self.ranges.push(Arc::new(ElfRange {
-                    map_range: map,
-                    elf_table: None,
-                }));
-            }
+            let m = map.lock().unwrap();
+            files_to_keep.insert(m.file(), ());
+            let elf_table = self.get_elf_table(map.clone()).unwrap().clone();
+            self.ranges.push(Arc::new(Mutex::new(ElfRange {
+                map_range: map.clone(),
+                elf_table,
+            })));
         }
 
-        self.file_to_table
-            .keys()
-            .filter(|f| !files_to_keep.contains_key(*f))
-            .for_each(|f| { self.file_to_table.remove(&f); return () });
+        let mut keys_to_remove = Vec::new();
+        for (key, _value) in self.file_to_table.iter() {
+            if !files_to_keep.contains_key(key) {
+                keys_to_remove.push(key.clone());
+            }
+        }
+        for key in keys_to_remove.iter() {
+            self.file_to_table.remove(key);
+        }
         Ok(())
     }
 
@@ -201,7 +214,8 @@ impl<'a> ProcTable<'a> {
             last_used_round: 0,
         };
         for (file, elf) in &self.file_to_table {
-            let table = elf.table.lock().unwrap();
+            let e = elf.lock().unwrap();
+            let table = e.table.lock().unwrap();
             let d = table.debug_info();
             if d.size != 0 {
                 res.elf_tables.insert(format!("{} {} {}", file.dev, file.inode, file.path), d);
@@ -210,20 +224,19 @@ impl<'a> ProcTable<'a> {
         res
     }
 
-    fn get_elf_table(&mut self, r: Arc<ProcMap>) -> Option<&mut ElfTable> {
-        let f = r.clone().file();
-        if let Some(e) = self.file_to_table.get_mut(&f) {
-            Some(e)
-        } else {
-            if let Some(e) = self.create_elf_table(r.clone()) {
-                self.file_to_table.insert(f, e);
-            }
-            self.file_to_table.get_mut(&r.clone().file())
+    fn get_elf_table(&mut self, rr: Arc<Mutex<ProcMap>>) -> Option<&Arc<Mutex<ElfTable>>> {
+        let r = rr.lock().unwrap();
+        if let Some(e) = self.file_to_table.get(&r.file()) {
+            return Some(e);
         }
+        if let Some(e) = self.create_elf_table(rr.clone()) {
+            self.file_to_table.insert(r.file().clone(), Arc::new(Mutex::new(e)));
+        }
+        self.file_to_table.get(&r.clone().file())
     }
 
-    fn create_elf_table(&self, m: Arc<ProcMap>) -> Option<ElfTable> {
-        if !m.pathname.starts_with('/') {
+    fn create_elf_table(&self, m: Arc<Mutex<ProcMap>>) -> Option<ElfTable> {
+        if !m.lock().unwrap().pathname.starts_with('/') {
             return None;
         }
         Some(ElfTable::new(
@@ -234,7 +247,7 @@ impl<'a> ProcTable<'a> {
     }
 }
 
-pub fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool) -> Result<Vec<Arc<ProcMap>>> {
+pub fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool) -> Result<Vec<Arc<Mutex<ProcMap>>>> {
     let mut modules = Vec::new();
     let mut remaining = proc_maps;
     while !remaining.is_empty() {
@@ -245,7 +258,7 @@ pub fn parse_proc_maps_executable_modules(proc_maps: &str, executable_only: bool
             continue;
         }
         if let Some(module) = parse_proc_map_line(line, executable_only).unwrap() {
-            modules.push(Arc::new(module));
+            modules.push(Arc::new(Mutex::new(module)));
         }
     }
     Ok(modules)

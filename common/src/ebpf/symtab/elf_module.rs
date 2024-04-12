@@ -6,6 +6,7 @@ use std::borrow::BorrowMut;
 use std::sync::{Arc, Mutex};
 use goblin::elf::header::ET_EXEC;
 use goblin::elf::program_header::{PF_X, PT_LOAD};
+use goblin::pe::options;
 use rustix::path::Arg;
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;
@@ -20,8 +21,8 @@ use crate::error::Error::{ELFError, NotFound};
 use crate::error::Result;
 
 #[derive(Clone)]
-pub struct ElfTableOptions<'a> {
-    pub(crate) elf_cache: Arc<ElfCache<'a>>,
+pub struct ElfTableOptions {
+    pub(crate) elf_cache: Arc<ElfCache>,
     pub(crate) metrics: Arc<SymtabMetrics>,
     pub(crate) symbol_options: SymbolOptions,
 }
@@ -37,19 +38,19 @@ impl Default for SymbolOptions {
     }
 }
 
-pub struct ElfTable<'a> {
+pub struct ElfTable {
     fs: String,
     pub(crate) table: Arc<Mutex<dyn SymbolNameResolver>>,
     pub(crate) base: u64,
     loaded: bool,
     loaded_cached: bool,
-    options: ElfTableOptions<'a>,
-    proc_map: Arc<ProcMap>,
+    options: ElfTableOptions,
+    proc_map: Arc<Mutex<ProcMap>>,
     err: Option<crate::error::Error>
 }
 
-impl ElfTable<'_> {
-    pub fn new(proc_map: Arc<ProcMap>, fs: String, options: ElfTableOptions) -> Self {
+impl ElfTable {
+    pub fn new(proc_map: Arc<Mutex<ProcMap>>, fs: String, options: ElfTableOptions) -> Self {
         Self {
             fs,
             table: Arc::new(Mutex::new(NoopSymbolNameResolver {})),
@@ -65,13 +66,13 @@ impl ElfTable<'_> {
     fn load(&mut self) {
         if self.loaded { return; }
         self.loaded = true;
-        let fs_elf_file_path = PathBuf::from(&self.fs).join(&self.proc_map.pathname);
+        let fs_elf_file_path = PathBuf::from(&self.fs).join(&self.proc_map.lock().unwrap().pathname);
 
-        let me_result = MappedElfFile::new(fs_elf_file_path);
+        let me_result = MappedElfFile::new(fs_elf_file_path.clone());
         let mut me = match me_result {
             Ok(file) => file,
             Err(err) => {
-                self.on_load_error(err);
+                self.on_load_error(&err);
                 return;
             }
         };
@@ -86,7 +87,7 @@ impl ElfTable<'_> {
             Ok(id) => id,
             Err(err) => {
                 // if err != NotFound
-                self.on_load_error(err);
+                self.on_load_error(&err);
                 return;
             }
         };
@@ -100,13 +101,13 @@ impl ElfTable<'_> {
         let file_info = match fs::metadata(&fs_elf_file_path) {
             Ok(info) => info,
             Err(err) => {
-                self.on_load_error(ELFError(err.to_string()));
+                self.on_load_error(&ELFError(err.to_string()));
                 return;
             }
         };
 
         if let Some(s) = self.options.elf_cache.get_symbols_by_stat(stat_from_file_info(&file_info)) {
-            self.table = s;
+            self.table = s.clone();
             self.loaded_cached = true;
             return;
         }
@@ -117,7 +118,7 @@ impl ElfTable<'_> {
             let mut debug_me = match debug_me_result {
                 Ok(file) => file,
                 Err(err) => {
-                    self.on_load_error(err);
+                    self.on_load_error(&err);
                     return;
                 }
             };
@@ -125,7 +126,7 @@ impl ElfTable<'_> {
             let symbols = Arc::new(Mutex::new(match create_symbol_table(debug_me) {
                 Ok(sym) => sym,
                 Err(err) => {
-                    self.on_load_error(err);
+                    self.on_load_error(&err);
                     return;
                 }
             }));
@@ -150,14 +151,15 @@ impl ElfTable<'_> {
     }
 
     fn find_base(&mut self, e: &MappedElfFile) -> bool {
-        if e.elf.header.e_type == ET_EXEC {
+        if e.header.e_type == ET_EXEC {
             self.base = 0;
             return true;
         }
-        for prog in &e.elf.program_headers {
+        for prog in &e.program_headers {
+            let pm = self.proc_map.lock().unwrap();
             if prog.p_type == PT_LOAD && (prog.p_flags & PF_X != 0) {
-                if self.proc_map.offset as u64 == prog.p_offset {
-                    self.base = self.proc_map.start_addr - prog.p_vaddr;
+                if pm.offset as u64 == prog.p_offset {
+                    self.base = pm.start_addr - prog.p_vaddr;
                     return true;
                 }
             }
@@ -165,11 +167,11 @@ impl ElfTable<'_> {
         false
     }
 
-    fn on_load_error(&mut self, err: crate::error::Error) {
+    fn on_load_error(&self, err: &crate::error::Error) {
+        let pm = self.proc_map.lock().unwrap();
         info!("failed to load elf table err: {}, f: {}, fs: {}",
-            &err.to_string(), &self.proc_map.pathname.to_string(), &self.fs.to_string());
-        self.options.metrics.elf_errors.with_label_values(&[&err.to_string()]).inc();
-        self.err = Option::from(err);
+            err.to_string(), &pm.pathname.to_string(), &self.fs.to_string());
+        self.options.metrics.elf_errors.with_label_values(&[err.to_string().as_str()]).inc();
     }
 
     fn find_debug_file(&self, build_id: &BuildID, elf_file: &mut MappedElfFile) -> Option<String> {
@@ -199,7 +201,9 @@ impl ElfTable<'_> {
     }
 
     fn find_debug_file_with_debug_link(&self, elf_file: &mut MappedElfFile) -> Option<String> {
-        let elf_file_path = Path::new(&self.proc_map.pathname);
+
+        let pm = self.proc_map.lock().unwrap();
+        let elf_file_path = Path::new(&pm.pathname);
         let data = elf_file.section_data_by_section_name(".gnu_debuglink").unwrap();
 
         if data.len() < 6 {
@@ -237,16 +241,18 @@ impl ElfTable<'_> {
         if let Some(_err) = &self.err { return None; }
 
         pc -= self.base;
-        let mut table = self.table.lock().unwrap();
-        let res = table.resolve(pc);
+        {
+            let mut table = self.table.lock().unwrap();
+            let res = table.resolve(pc);
 
-        if res.is_some() {
-            return res;
-        } else if !table.is_dead() {
-            return None;
-        } else if !self.loaded_cached {
-            self.err = Some(ELFError("Table is dead".to_string()));
-            return None;
+            if res.is_some() {
+                return res;
+            } else if !table.is_dead() {
+                return None;
+            } else if !self.loaded_cached {
+                self.err = Some(ELFError("Table is dead".to_string()));
+                return None;
+            }
         }
 
         self.table = Arc::new(Mutex::new(NoopSymbolNameResolver {}));
@@ -256,6 +262,7 @@ impl ElfTable<'_> {
 
         if let Some(_err) = &self.err { return None; }
 
+        let mut table = self.table.lock().unwrap();
         table.resolve(pc)
     }
 
