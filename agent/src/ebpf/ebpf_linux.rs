@@ -6,29 +6,35 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::sync::Mutex;
+use std::borrow::Borrow;
+use async_trait::async_trait;
 use log::error;
 use tokio::time::interval;
-use common::common::collector::collect;
+use common::common::collector;
+use common::ebpf::metrics::ebpf_metrics::EbpfMetrics;
+use common::ebpf::metrics::metrics::ProfileMetrics;
+use common::ebpf::metrics::symtab::SymtabMetrics;
 use common::ebpf::pprof;
 use common::ebpf::pprof::BuildersOptions;
 use common::ebpf::sd::target::{LABEL_CONTAINER_ID, LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
 use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
 use common::ebpf::symtab::elf_module::SymbolOptions;
-use common::ebpf::symtab::gcache::GCacheOptions;
+use common::ebpf::symtab::gcache::{debug_info, GCacheOptions};
 use common::ebpf::symtab::symbols::CacheOptions;
 use common::error::Error::OSError;
 
 use common::error::Result;
 
-use crate::appender::{Appendable, Fanout, RawSample};
+use crate::appender::{Appendable, Appender, Fanout, RawSample};
 use crate::common::component::Component;
 use crate::common::registry::Options;
-use crate::ebpf::metrics::metrics;
+use crate::write::write::FanOutClient;
 
 type Target = HashMap<String, String>;
-#[derive(Debug, Copy, Clone)]
+
+#[derive(Clone)]
 pub struct Arguments {
-    pub forward_to: Arc<Vec<dyn Appendable>>,
+    pub forward_to: Arc<Vec<Box<dyn Appender>>>,
     pub targets: Vec<Target>,
     pub collect_interval: Duration,
     pub sample_rate: i32,
@@ -42,16 +48,14 @@ pub struct Arguments {
     pub python_enabled: bool,
 }
 
-// Define the component structure
-#[derive(Debug)]
 pub struct EbpfLinuxComponent<'a> {
     options: Options,
     args: Arguments,
     session: Session<'a>,
 
-    appendable: Fanout,
+    appendable: Box<Fanout>,
     debug_info: DebugInfo,
-    metrics: metrics
+    metrics: Arc<EbpfMetrics>
 }
 
 struct DebugInfo {
@@ -59,63 +63,71 @@ struct DebugInfo {
     session: SessionDebugInfo
 }
 
-impl Component for EbpfLinuxComponent {
-    async fn run(mut self) {
+impl Default for DebugInfo {
+    fn default() -> Self {
+        Self {
+            targets: vec![],
+            session: SessionDebugInfo::default(),
+        }
+    }
+}
+
+
+impl Component for EbpfLinuxComponent<'_> {
+    fn run(&mut self) -> Result<()> {
         let mut interval = interval(self.args.collect_interval);
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    let result = self.collect_profiles().await;
+                    let result = self.collect_profiles();
                     if let Err(err) = result {
                         dbg!(format!("ebpf profiling session failed: {}", err));
                     }
                     self.update_debug_info();
                 }
-                _ = self.session.changed() => {
-                    let debug_info = DebugInfo {
-                        targets: self.session.target_finder.debug_info(),
-                        session: self.session.debug_info().unwrap(),
-                    };
-                    self.debug_info = debug_info;
-                }
             }
         }
-    }
-
-    fn update(&mut self, args: Arguments) {
-        self.args = args;
-        self.session.update_targets(targets_option_from_args(&self.args));
-        self.appendable.update_children(self.args.clone().forward_to);
+        Ok(())
     }
 }
 
-impl EbpfLinuxComponent {
+impl EbpfLinuxComponent<'_> {
+
+    async fn update(&mut self, args: Arguments) -> Result<()> {
+        Ok(())
+    }
+
     pub async fn new(opts: Options, args: Arguments) -> Result<Self> {
         let target_finder = Arc::new(Mutex::new(TargetFinder::new(
             1024,
             File::open("/").unwrap()
         )));
-        let ms = metrics::new(opts.registerer.borrow());
-        let session = Session::new(target_finder, convert_session_options(&args)).unwrap();
+        let ms = Arc::new(EbpfMetrics::new(opts.registerer.borrow()));
+        let sesstion_opts = convert_session_options(&args.clone(), ms.clone().profile_metrics.clone());
+        let session = Session::new(target_finder, sesstion_opts).unwrap();
 
         Ok(Self {
             options: opts.clone(),
-            args,
+            args: args.clone(),
             session,
-            appendable: Fanout::new(args.forward_to, opts.id, opts.registerer),
-            debug_info: DebugInfo { targets: vec![], session: Default::default() },
-            metrics: ms
+            appendable: Box::new(Fanout::new(args.clone().forward_to, opts.id, opts.registerer.clone())),
+            debug_info: DebugInfo { targets: vec![], session: SessionDebugInfo::default() },
+            metrics: ms.clone()
         })
     }
 
-    async fn collect_profiles(&mut self) -> Result<()> {
-        let mut builders = pprof::ProfileBuilders::new(
+    fn collect_profiles(&mut self) -> Result<()> {
+        let mut builders = Arc::new(Mutex::new(pprof::ProfileBuilders::new(
             BuildersOptions { sample_rate: 1000, per_pid_profile: false }
-        );
-        collect(Arc::new(Mutex::new(builders)), &mut self.session).await.unwrap();
+        )));
+        collector::collect(builders.clone(), &mut self.session).unwrap();
 
-        for (_, builder) in builders.builders {
-            let service_name = builder.labels.get(LABEL_SERVICE_NAME).unwrap().trim();
+        let bb = builders.clone();
+        let b = bb.lock().unwrap();
+        for (_, builder) in &b.builders {
+            let sn = builder.labels.get(LABEL_SERVICE_NAME);
+            let a = sn.unwrap();
+            let service_name = a.trim();
             self.metrics.pprofs_total
                 .with_label_values(&[service_name]).inc();
             self.metrics.pprof_samples_total
@@ -125,18 +137,18 @@ impl EbpfLinuxComponent {
             let mut buf = vec![];
             builder.write(&mut buf);
 
-            let raw_profile = buf.into();
-            let samples = vec![RawSample { raw_profile }];
+            let raw_profile: Vec<u8> = buf.into();
             self.metrics.pprof_bytes_total
                 .with_label_values(&[service_name])
-                .add(raw_profile.len() as f64);
+                .inc_by(raw_profile.len() as f64);
 
+            let samples = vec![RawSample { raw_profile }];
             let appender = self.appendable.appender();
             if let Err(err) = appender.append(
-                builder.labels().clone(),
+                builder.labels.clone(),
                 samples
             ) {
-                error!("ebpf pprof write", "err" => format!("{}", err));
+                error!("ebpf pprof write err {}", err);
                 return Err(OSError(format!("{}", err)));
             }
         }
@@ -154,37 +166,38 @@ impl EbpfLinuxComponent {
     }
 }
 
-fn convert_session_options(args: &Arguments) -> SessionOptions {
-    let keep_rounds = args.cache_rounds.unwrap_or(3);
+fn convert_session_options(args: &Arguments, ms: Arc<ProfileMetrics>) -> SessionOptions {
+    let keep_rounds = 3;//args.cache_rounds.unwrap_or(3);
     SessionOptions {
-        collect_user: args.collect_user_profile.unwrap_or(true),
-        collect_kernel: args.collect_kernel_profile.unwrap_or(true),
-        sample_rate: args.sample_rate.unwrap_or(97) as u32,
-        python_enabled: args.python_enabled.unwrap_or(true),
+        collect_user: true, // args.collect_user_profile.unwrap_or(true),
+        collect_kernel: true, //args.collect_kernel_profile.unwrap_or(true),
+        unknown_symbol_module_offset: false,
+        sample_rate: 97, //args.sample_rate.unwrap_or(97) as u32,
+        python_enabled: true, //args.python_enabled.unwrap_or(true),
         cache_options: CacheOptions {
             pid_cache_options: GCacheOptions {
-                size: args.pid_cache_size.unwrap_or(32) as usize,
+                size: 32, //args.pid_cache_size.unwrap_or(32) as usize,
                 keep_rounds
             },
             build_id_cache_options: GCacheOptions {
-                size: args.build_id_cache_size.unwrap_or(64) as usize,
+                size: 64, //args.build_id_cache_size.unwrap_or(64) as usize,
                 keep_rounds
             },
             same_file_cache_options: GCacheOptions {
-                size: args.same_file_cache_size.unwrap_or(8) as usize,
+                size: 8, //args.same_file_cache_size.unwrap_or(8) as usize,
                 keep_rounds
             },
             symbol_options: SymbolOptions::default()
         },
-        ..Default::default()
+        unknown_symbol_address: false,
+        metrics: ms,
     }
 }
 
 fn targets_option_from_args(args: &Arguments) -> TargetsOptions {
     TargetsOptions {
-        targets: args.clone().targets.unwrap_or_default(),
+        targets: args.clone().targets,
         targets_only: true,
-        container_cache_size: args.container_id_cache_size.unwrap_or_default() as usize,
-        ..Default::default()
+        container_cache_size: args.container_id_cache_size as usize,
     }
 }

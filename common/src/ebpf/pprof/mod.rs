@@ -103,6 +103,7 @@ impl ProfileBuilders {
     }
 }
 
+#[derive(Clone)]
 struct ProfileBuilder {
     pub locations: HashMap<String, Location>,
     pub functions: HashMap<String, Function>,

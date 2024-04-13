@@ -1,6 +1,7 @@
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use gimli::DebugInfo;
+use goblin::elf::Elf;
 use crate::error::Result;
 use crate::ebpf::symtab::elf::buildid::BuildID;
 use crate::ebpf::symtab::elf::symbol_table::{SymbolNameTable, SymTabDebugInfo};
@@ -92,6 +93,7 @@ impl ElfCache {
     }
 }
 
+#[derive(Debug)]
 pub struct ElfCacheDebugInfo {
     build_id_cache: GCacheDebugInfo<SymTabDebugInfo>,
     same_file_cache: GCacheDebugInfo<SymTabDebugInfo>,
@@ -100,5 +102,14 @@ pub struct ElfCacheDebugInfo {
 impl ElfCacheDebugInfo {
     pub fn new(build_id_cache: GCacheDebugInfo<SymTabDebugInfo>, same_file_cache: GCacheDebugInfo<SymTabDebugInfo>) -> Self {
         Self { build_id_cache, same_file_cache }
+    }
+}
+
+impl Default for ElfCacheDebugInfo {
+    fn default() -> Self {
+        ElfCacheDebugInfo {
+            build_id_cache: GCacheDebugInfo::default(),
+            same_file_cache: GCacheDebugInfo::default(),
+        }
     }
 }

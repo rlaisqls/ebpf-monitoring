@@ -1,15 +1,16 @@
 use prometheus::Registry;
+use crate::ebpf::metrics::registry::Registerer;
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 
 #[derive(Clone)]
-pub struct Metrics {
+pub struct ProfileMetrics {
     pub symtab: SymtabMetrics
 }
 
-impl Metrics {
-    pub fn new(reg: &Registry) -> Self {
+impl ProfileMetrics {
+    pub fn new(reg: &dyn Registerer) -> Self {
         let symtab = SymtabMetrics::new(reg);
-        Metrics { symtab }
+        ProfileMetrics { symtab }
     }
 }

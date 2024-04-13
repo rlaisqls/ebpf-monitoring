@@ -142,6 +142,7 @@ impl Default for GCacheOptions {
     }
 }
 
+#[derive(Debug)]
 pub struct GCacheDebugInfo<T> {
     lru_size: usize,
     round_size: usize,
@@ -174,11 +175,17 @@ pub fn debug_info<K, V, D>(g: &GCache<K, V>, ff: fn(&K, &Arc<Mutex<V>>, i32) -> 
         lru_dump: Vec::with_capacity(g.lru_size()),
         round_dump: Vec::with_capacity(g.round_size()),
     };
-    g.each_lru(move |k: &K, v: &Arc<Mutex<V>>, round: i32| {
-        res.lru_dump.push(ff(k, v, round));
-    });
-    g.each_round(move |k: &K, v: &Arc<Mutex<V>>, round: i32| {
-        res.round_dump.push(ff(k, v, round));
-    });
+
+    for (k, e) in g.lru_cache.iter() {
+        let entry = e.lock().unwrap();
+        res.lru_dump.push(ff(k, &entry.v, entry.round));
+    }
+
+    for (k, e) in g.round_cache.iter() {
+        let entry = e.lock().unwrap();
+        res.round_dump.push(ff(k, &entry.v, entry.round));
+    }
+
     res
 }
+

@@ -19,9 +19,9 @@ pub struct ProcMap {
     pub(crate) end_addr: u64,
     pub(crate) pathname: String,
     pub(crate) offset: i64,
-    perms: ProcMapPermissions,
-    dev: u64,
-    inode: u64,
+    pub(crate) perms: ProcMapPermissions,
+    pub(crate) dev: u64,
+    pub(crate) inode: u64,
 }
 
 

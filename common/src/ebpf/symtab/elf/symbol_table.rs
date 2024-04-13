@@ -105,6 +105,7 @@ impl SymbolNameTable {
     }
 }
 
+#[derive(Debug)]
 pub struct SymTabDebugInfo {
     name: String,
     pub(crate) size: usize,

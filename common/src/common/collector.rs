@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use crate::ebpf::pprof::ProfileBuilders;
 use crate::ebpf::sd::target::Target;
+use crate::ebpf::session::Session;
 use crate::error::Result;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -27,11 +28,23 @@ pub trait SamplesCollector {
         where F: Fn(ProfileSample);
 }
 
-pub fn collect<S>(builders: Arc<Mutex<ProfileBuilders>>, mut collector: S) -> Result<()> where S: SamplesCollector {
+pub fn collect<S>(builders: Arc<Mutex<ProfileBuilders>>, collector: &mut S) -> Result<()> where S: SamplesCollector {
     collector.collect_profiles(|sample: ProfileSample| {
         if let Ok(mut b) = builders.lock() {
             b.add_sample(sample);
         }
     }).unwrap();
     Ok(())
+}
+
+impl SamplesCollector for Session<'_> {
+    fn collect_profiles<F>(&mut self, callback: F) -> Result<()> where F: Fn(ProfileSample) {
+        if let Ok(mut sym_cache) = self.sym_cache.lock() {
+            sym_cache.next_round();
+            self.round_number += 1;
+        }
+        self.collect_regular_profile(callback).unwrap();
+        self.cleanup();
+        Ok(())
+    }
 }

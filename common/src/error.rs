@@ -27,7 +27,9 @@ pub enum Error {
     #[error("Session Error: {0}")]
     SessionError(String),
     #[error("Map Error: {0}")]
-    MapError(String)
+    MapError(String),
+    #[error("Write Error: {0}")]
+    WriteError(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

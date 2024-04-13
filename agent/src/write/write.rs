@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::common::component::Component;
+use std::borrow::Borrow;
 
 use async_trait::async_trait;
 use futures::future;
@@ -15,13 +15,16 @@ use prost::Message;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use tonic::transport::Channel;
+use common::ebpf::metrics::write_metrics::WriteMetrics;
+use common::error::Error::{OSError, WriteError};
 use common::error::Result;
-use crate::common::registry::{Exports, Options};
 
 use push_api::pusher_service_client::PusherServiceClient;
 use push_api::{PushRequest, PushResponse};
+
+use crate::common::registry::{Exports, Options};
+use crate::common::component::Component;
 use crate::appender::Fanout;
-use crate::write::metrics::Metrics;
 
 pub mod push_api {
     include!("../api/push/push.v1.rs");
@@ -53,7 +56,7 @@ impl Default for EndpointOptions {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone)]
 pub struct Arguments {
     pub external_labels: HashMap<String, String>,
     pub endpoints: Vec<EndpointOptions>,
@@ -68,62 +71,51 @@ impl Default for Arguments {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone)]
 pub struct WriteComponent {
     opts: Options,
     cfg: Arguments,
-    metrics: Arc<Metrics>
+    metrics: Arc<WriteMetrics>
 }
 
 impl WriteComponent {
-    pub async fn new(o: Options, c: Arguments) -> Result<(dyn Component, FanOutClient)> {
-        let metrics = Metrics::new(&o.registerer);
-        let receiver = FanOutClient::new(o, c, Arc::new(metrics)).await.unwrap();
-        Ok((Component {
-            opts: o.borrow(),
-            cfg: c.borrow(),
+
+    async fn update(&mut self, new_cfg: Arguments) -> Result<()> {
+        Ok(())
+    }
+    pub async fn new(o: Options, c: Arguments) -> Result<(Self, FanOutClient)> {
+        let metrics = Arc::new(WriteMetrics::new(o.registerer.borrow()));
+        let receiver = FanOutClient::new(o.clone(), c.clone(), metrics.clone()).await.unwrap();
+        Ok((WriteComponent {
+            opts: o,
+            cfg: c,
             metrics,
         }, receiver))
     }
 }
 
 impl Component for WriteComponent {
-
-    async fn run(self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        Ok(())
-    }
-
-    async fn update(&mut self, new_cfg: Arguments) -> Result<()> {
-        self.cfg = new_cfg.clone();
-        // Assuming level.Debug and Log are part of a logging library
-        info!("updating iwm.write config: {:?}", self.cfg);
-
-        let receiver = FanOutClient::new(
-            self.opts,
-            new_cfg,
-            self.borrow().metrics
-        ).await.unwrap();
-        self.opts.on_state_change(Box::new(receiver));
+    fn run(&mut self) -> Result<()> {
         Ok(())
     }
 }
 
-
-#[derive(Debug)]
-struct FanOutClient {
+pub struct FanOutClient {
     clients: Vec<PusherServiceClient<Channel>>,
     config: Arguments,
     opts: Options,
-    metrics: Arc<Metrics>,
+    metrics: Arc<WriteMetrics>,
 }
 
 impl FanOutClient {
-    async fn new(opts: Options, config: Arguments, metrics: Arc<Metrics>) -> Result<Self> {
+    async fn new(opts: Options, config: Arguments, metrics: Arc<WriteMetrics>) -> Result<Self> {
         let mut clients = Vec::with_capacity(config.endpoints.len());
-        for endpoint in &config.endpoints {
-            let client = PusherServiceClient::connect(&endpoint).await?;
-            clients.push(client);
-        }
+        let client = PusherServiceClient::connect("http://[::1]:50051").await.unwrap();
+        clients.push(client);
+        // for endpoint in &config.endpoints {
+        //     let client = PusherServiceClient::connect(&endpoint).await.unwrap();
+        //     clients.push(client);
+        // }
         Ok(Self {
             clients, config, opts, metrics,
         })
@@ -139,17 +131,17 @@ impl FanOutClient {
             let config = self.config.endpoints[i].clone();
             let metrics = self.metrics.clone();
 
-            tokio::spawn(async move {
+            tokio::spawn(async {
                 loop {
                     let result = client.push(req.clone()).await;
                     if result.is_ok() {
-                        metrics.sent_bytes.with_label_values(&[&config.url]).add(req_size as f64);
-                        metrics.sent_profiles.with_label_values(&[&config.url]).add(profile_count as f64);
+                        metrics.sent_bytes.with_label_values(&[&config.url]).inc_by(req_size as f64);
+                        metrics.sent_profiles.with_label_values(&[&config.url]).inc_by(profile_count as f64);
                         break;
                     }
                     if let Err(err) = result {
                         log::warn!("failed to push to endpoint: {:?}", err);
-                        errors.push(err.clone());
+                        //errors.push(err.clone());
                         metrics.retries.with_label_values(&[&config.url]).inc();
                     }
                 }
@@ -161,7 +153,7 @@ impl FanOutClient {
         });
         let _ = future::try_join_all(tasks).await.unwrap();
         if !errors.is_empty() {
-            return Err(anyhow::anyhow!("errors occurred during pushing: {:?}", errors).into());
+            return Err(WriteError(format!("errors occurred during pushing: {:?}", errors)));
         }
 
         Ok(PushResponse::default())
@@ -172,14 +164,9 @@ async fn push_to_client<T>(
     client: &mut PusherServiceClient<T>,
     config: &EndpointOptions,
     req: &PushRequest,
-    metrics: &Metrics,
+    metrics: &WriteMetrics,
 ) -> Result<(), anyhow::Error> {
-    let mut req = req.clone();
-
-    for (key, value) in &config.headers {
-        req.header_mut().insert(key.clone(), value.clone());
-    }
-
+    let mut req = tonic::Request::new(req.clone());
     let deadline = config.remote_timeout;
     let timeout = Duration::from_secs(deadline.as_secs() + deadline.subsec_millis() as u64 / 1000);
 

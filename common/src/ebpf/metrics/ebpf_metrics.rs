@@ -1,20 +1,21 @@
+use std::sync::Arc;
 use prometheus::{Counter, CounterVec, Gauge};
-use common::ebpf::metrics::metrics::Metrics;
-use common::ebpf::metrics::registry::Registerer;
+use crate::ebpf::metrics::metrics::ProfileMetrics;
+use crate::ebpf::metrics::registry::Registerer;
 
-pub struct metrics {
+pub struct EbpfMetrics {
     pub targets_active: Gauge,
     pub profiling_sessions_total: Counter,
     pub profiling_sessions_failing_total: Counter,
     pub pprofs_total: CounterVec,
     pub pprof_bytes_total: CounterVec,
     pub pprof_samples_total: CounterVec,
-    pub ebpf_metrics: Metrics
+    pub profile_metrics: Arc<ProfileMetrics>
 }
 
-impl metrics {
-    pub fn new(reg: &dyn Registerer) -> metrics {
-        metrics {
+impl EbpfMetrics {
+    pub fn new(reg: &dyn Registerer) -> EbpfMetrics {
+        EbpfMetrics {
             targets_active: reg.register_gauge(
                 "iwm_ebpf_active_targets",
                 "Current number of active targets being tracked by the ebpf component"
@@ -42,7 +43,7 @@ impl metrics {
                 "Total number of pprof profiles collected by the ebpf component",
                 &["service_name"]
             ),
-            ebpf_metrics: Metrics::new(reg)
+            profile_metrics: Arc::new(ProfileMetrics::new(reg))
         }
     }
 }
