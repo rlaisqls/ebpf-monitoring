@@ -140,8 +140,6 @@ impl Reader {
     }
 
     pub(crate) fn read_into(&mut self, rec: &mut Record) -> Result<()> {
-        let _ = self.mu.lock().unwrap();
-
         if self.overwritable && !self.paused {
             return Err(MustBePaused);
         }
@@ -152,8 +150,6 @@ impl Reader {
 
         loop {
             if self.epoll_rings.is_empty() {
-                let _ = self.pause_mu.lock().unwrap();
-
                 // Re-validate pr.paused since we dropped pauseMu.
                 if self.overwritable && !self.paused {
                     return Err(MustBePaused);

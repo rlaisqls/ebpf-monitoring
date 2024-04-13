@@ -24,6 +24,7 @@ pub struct ProcTable {
 }
 unsafe impl Sync for ProcTable {}
 
+#[derive(Debug)]
 pub struct ProcTableDebugInfo {
     elf_tables: HashMap<String, SymTabDebugInfo>,
     size: usize,
@@ -224,26 +225,32 @@ impl ProcTable {
         res
     }
 
-    fn get_elf_table(&mut self, rr: Arc<Mutex<ProcMap>>) -> Option<&Arc<Mutex<ElfTable>>> {
+    fn get_elf_table(&mut self, rr: Arc<Mutex<ProcMap>>) -> Option<Arc<Mutex<ElfTable>>> {
         let r = rr.lock().unwrap();
-        if let Some(e) = self.file_to_table.get(&r.file()) {
-            return Some(e);
+
+        let a = self.file_to_table.get(&r.clone().file());
+        if a.is_some() {
+            return Some(a.unwrap().clone());
         }
-        if let Some(e) = self.create_elf_table(rr.clone()) {
-            self.file_to_table.insert(r.file().clone(), Arc::new(Mutex::new(e)));
+
+        let b = self.create_elf_table(rr.clone());
+        if b.is_some() {
+            let bb = b.unwrap();
+            self.file_to_table.insert(r.file().clone(), bb.clone());
+            return Some(bb.clone());
         }
-        self.file_to_table.get(&r.clone().file())
+        None
     }
 
-    fn create_elf_table(&self, m: Arc<Mutex<ProcMap>>) -> Option<ElfTable> {
+    fn create_elf_table(&self, m: Arc<Mutex<ProcMap>>) -> Option<Arc<Mutex<ElfTable>>> {
         if !m.lock().unwrap().pathname.starts_with('/') {
             return None;
         }
-        Some(ElfTable::new(
+        Some(Arc::new(Mutex::new(ElfTable::new(
             m,
             self.root_fs.to_str().unwrap().to_string(),
             self.elf_table_options.clone()
-        ))
+        ))))
     }
 }
 

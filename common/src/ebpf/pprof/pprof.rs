@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use crate::ebpf::pprof::profiles::{Function, Line, Location, Profile};
 
+
 // Referenced from https://github.com/grafana/pyroscope-rs/blob/a70f3256bab624b25f365dd4afa0bc959ff69f50/src/encode/pprof.rs
+#[derive(Clone)]
 pub struct PProfBuilder {
     profile: Profile,
     strings: HashMap<String, i64>,

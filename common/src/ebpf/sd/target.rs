@@ -107,7 +107,6 @@ fn infer_service_name(target: DiscoveryTarget) -> String {
 pub struct TargetsOptions {
     pub targets: Vec<DiscoveryTarget>,
     pub targets_only: bool,
-    default_target: DiscoveryTarget,
     pub container_cache_size: usize,
 }
 
@@ -181,13 +180,7 @@ impl TargetFinder {
         self.cid2target = container_id2_target;
         self.pid2target = pid2_target;
 
-        self.default_target = if opts.targets_only {
-            None
-        } else {
-            Some(
-                Target::new("".to_string(), 0, opts.default_target.clone())
-            )
-        };
+        self.default_target = None;
         debug!("created targets: {}", self.cid2target.len());
     }
 

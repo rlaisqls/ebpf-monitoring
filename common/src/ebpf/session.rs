@@ -26,7 +26,8 @@ use profile::*;
 
 use crate::common::collector::{ProfileSample, SamplesCollector, SampleType};
 use crate::ebpf::cpuonline;
-use crate::ebpf::metrics::metrics::Metrics;
+use crate::ebpf::metrics::ebpf_metrics::EbpfMetrics;
+use crate::ebpf::metrics::metrics::ProfileMetrics;
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 use crate::ebpf::perf_event::PerfEvent;
 use crate::ebpf::reader::Reader;
@@ -42,6 +43,7 @@ use crate::ebpf::sync::PidOp::Dead;
 use crate::ebpf::wait_group::WaitGroup;
 use crate::error::Error::{InvalidData, NotFound, OSError, SessionError};
 use crate::error::Result;
+use crate::ebpf::metrics::metrics;
 
 mod profile {
     include!("bpf/profile.skel.rs");
@@ -54,7 +56,7 @@ pub struct SessionOptions {
     pub unknown_symbol_module_offset: bool,
     pub unknown_symbol_address: bool,
     pub python_enabled: bool,
-    pub metrics: Arc<Metrics>,
+    pub metrics: Arc<ProfileMetrics>,
     pub sample_rate: u32,
     pub cache_options: CacheOptions,
 }
@@ -85,9 +87,18 @@ pub struct SessionDebugInfo {
     pid_cache: GCacheDebugInfo<ProcTableDebugInfo>
 }
 
+impl Default for SessionDebugInfo {
+    fn default() -> Self {
+        Self {
+            elf_cache: ElfCacheDebugInfo::default(),
+            pid_cache: GCacheDebugInfo::default(),
+        }
+    }
+}
+
 pub struct Session<'a> {
     pub target_finder: Arc<Mutex<TargetFinder>>,
-    sym_cache: Arc<Mutex<SymbolCache>>,
+    pub(crate) sym_cache: Arc<Mutex<SymbolCache>>,
     bpf: ProfileSkel<'a>,
 
     events_reader: Option<Arc<Mutex<Reader>>>,
@@ -96,7 +107,7 @@ pub struct Session<'a> {
     pid_exec_requests: Option<Receiver<u32>>,
 
     options: SessionOptions,
-    round_number: u32,
+    pub(crate) round_number: u32,
     mutex: Mutex<()>,
     started: bool,
     kprobes: Vec<Link>,
@@ -113,17 +124,17 @@ pub struct Session<'a> {
     perf_events: Vec<PerfEvent>
 }
 
-impl SamplesCollector for Session<'_> {
-    fn collect_profiles<F>(&mut self, callback: F) -> Result<()> where F: Fn(ProfileSample) {
-        if let Ok(mut sym_cache) = self.sym_cache.lock() {
-            sym_cache.next_round();
-            self.round_number += 1;
-        }
-        self.collect_regular_profile(callback).unwrap();
-        self.cleanup();
-        Ok(())
-    }
-}
+// impl SamplesCollector for Session<'_> {
+//     fn collect_profiles<F>(&mut self, callback: F) -> Result<()> where F: Fn(ProfileSample) {
+//         if let Ok(mut sym_cache) = self.sym_cache.lock() {
+//             sym_cache.next_round();
+//             self.round_number += 1;
+//         }
+//         self.collect_regular_profile(callback).unwrap();
+//         self.cleanup();
+//         Ok(())
+//     }
+// }
 
 impl Session<'_> {
     pub fn new(target_finder: Arc<Mutex<TargetFinder>>, opts: SessionOptions) -> Result<Self> {
@@ -531,7 +542,7 @@ impl Session<'_> {
         None
     }
 
-    fn collect_regular_profile<F>(&mut self, cb: F) -> Result<()> where F: Fn(ProfileSample) {
+    pub(crate) fn collect_regular_profile<F>(&mut self, cb: F) -> Result<()> where F: Fn(ProfileSample) {
         let mut sb = StackBuilder::new();
         let mut known_stacks: HashMap<u32, bool> = HashMap::new();
         let (keys, values, batch) = self.get_counts_map_values().unwrap();
@@ -671,7 +682,7 @@ impl Session<'_> {
         }
     }
 
-    fn cleanup(&mut self) {
+    pub(crate) fn cleanup(&mut self) {
 
         let mut sym_cache = self.sym_cache.lock().unwrap();
         sym_cache.cleanup();

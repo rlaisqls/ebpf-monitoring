@@ -178,7 +178,7 @@ mod imp {
     }
 
     pub mod profile_bss_types {
-        #[derive(Debug, Copy, Clone)]
+        #[derive(Debug, Clone)]
         #[repr(C)]
         pub struct bss {
             pub k__: sample_key,

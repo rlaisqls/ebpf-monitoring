@@ -12,8 +12,6 @@ use agent::common::component::Component;
 use agent::common::registry::Options;
 use agent::ebpf::ebpf_linux;
 use agent::ebpf::ebpf_linux::{EbpfLinuxComponent};
-use agent::scrape::scrape;
-use agent::scrape::scrape::ScrapeComponent;
 use agent::write::write;
 use agent::write::write::WriteComponent;
 
@@ -47,22 +45,10 @@ async fn main() -> Result<(), ()> {
             ..Default::default()
         }])
     };
-    let (write_component, fanout_client) = WriteComponent::new(option, write_args).await.unwrap();
-
-    let scrape_args = scrape::Arguments {
-        targets: vec![],
-        forward_to: vec![],
-        job_name: None,
-        params: Default::default(),
-        scrape_interval: Default::default(),
-        scrape_timeout: Default::default(),
-        scheme: "".to_string(),
-        profiling_config: Default::default(),
-    };
-    let scrape_component = ScrapeComponent::new(option, scrape_args).await.unwrap();
+    let (mut write_component, fanout_client) = WriteComponent::new(option.clone(), write_args).await.unwrap();
 
     let argument = ebpf_linux::Arguments {
-        forward_to: Arc::new(Vec::from([fanout_client])),
+        forward_to: Arc::new(Vec::from([Box::new(fanout_client)])),
         targets: vec![
             [("__address__", "pyroscope:4100"), ("service_name", "pyroscope")],
             [("__address__", "agent:12345"), ("service_name", "agent")],
@@ -79,9 +65,8 @@ async fn main() -> Result<(), ()> {
         collect_kernel_profile: true,
         python_enabled: true
     };
-    let ebpf_component = EbpfLinuxComponent::new(option, argument).await.unwrap();
+    let mut ebpf_component = EbpfLinuxComponent::new(option.clone(), argument).await.unwrap();
 
-    scrape_component.run().await.expect("TODO: panic message");
     write_component.run().await.expect("TODO: panic message");
     ebpf_component.run().await.expect("TODO: panic message");
 
