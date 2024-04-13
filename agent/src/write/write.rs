@@ -122,11 +122,10 @@ impl FanOutClient {
     }
 
     async fn push(&self, req: PushRequest) -> Result<PushResponse> {
-        let (tx, rx) = oneshot::channel();
-        let mut errors = Vec::new();
+        //let mut errors = Vec::new();
         let (req_size, profile_count) = request_size(&req);
 
-        let tasks = self.clients.iter().enumerate().map(|(i, client)| {
+        self.clients.iter().enumerate().for_each(|(i, client)| {
             let mut client = client.clone();
             let config = self.config.endpoints[i].clone();
             let metrics = self.metrics.clone();
@@ -145,16 +144,13 @@ impl FanOutClient {
                         metrics.retries.with_label_values(&[&config.url]).inc();
                     }
                 }
-            })
+            });
+            ()
         });
 
-        let _ = tokio::spawn(async move {
-            let _ = tx.send(());
-        });
-        let _ = future::try_join_all(tasks).await.unwrap();
-        if !errors.is_empty() {
-            return Err(WriteError(format!("errors occurred during pushing: {:?}", errors)));
-        }
+        // if !errors.is_empty() {
+        //     return Err(WriteError(format!("errors occurred during pushing: {:?}", errors)));
+        // }
 
         Ok(PushResponse::default())
     }
