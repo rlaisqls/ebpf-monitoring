@@ -80,7 +80,8 @@ impl Component for EbpfLinuxComponent<'_> {
     fn run(&mut self) -> Result<()> {
         let mut interval = interval(self.args.collect_interval);
         loop {
-            tokio::select! {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                tokio::select! {
                 _ = interval.tick() => {
                     let result = self.collect_profiles();
                     if let Err(err) = result {
@@ -88,7 +89,7 @@ impl Component for EbpfLinuxComponent<'_> {
                     }
                     self.update_debug_info();
                 }
-            }
+            } });
         }
         Ok(())
     }

@@ -67,8 +67,8 @@ async fn main() -> Result<(), ()> {
     };
     let mut ebpf_component = EbpfLinuxComponent::new(option.clone(), argument).await.unwrap();
 
-    write_component.run().await.expect("TODO: panic message");
-    ebpf_component.run().await.expect("TODO: panic message");
+    write_component.run().expect("TODO: panic message");
+    ebpf_component.run().expect("TODO: panic message");
 
     Ok(())
 }

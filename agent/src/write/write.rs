@@ -95,7 +95,7 @@ impl WriteComponent {
 }
 
 impl Component for WriteComponent {
-    async fn run(&mut self) -> Result<()> {
+    fn run(&mut self) -> Result<()> {
         Ok(())
     }
 }
