@@ -77,21 +77,19 @@ impl Default for DebugInfo {
 
 
 impl Component for EbpfLinuxComponent<'_> {
-    fn run(&mut self) -> Result<()> {
+    async fn run(&mut self) {
         let mut interval = interval(self.args.collect_interval);
         loop {
-            tokio::runtime::Runtime::new().unwrap().block_on(async {
-                tokio::select! {
-                _ = interval.tick() => {
-                    let result = self.collect_profiles();
-                    if let Err(err) = result {
-                        dbg!(format!("ebpf profiling session failed: {}", err));
-                    }
-                    self.update_debug_info();
+            tokio::select! {
+                  _ = interval.tick() => {
+                      let result = self.collect_profiles();
+                        if let Err(err) = result {
+                          dbg!(format!("ebpf profiling session failed: {}", err));
+                        }
+                        self.update_debug_info();
                 }
-            } });
+            }
         }
-        Ok(())
     }
 }
 

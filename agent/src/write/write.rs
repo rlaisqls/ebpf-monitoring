@@ -82,10 +82,8 @@ impl WriteComponent {
     }
     pub async fn new(o: Options, c: Arguments) -> Result<(Self, FanOutClient)> {
         let metrics = Arc::new(WriteMetrics::new(o.registerer.borrow()));
+        let receiver = FanOutClient::new(o.clone(), c.clone(), metrics.clone()).await.unwrap();
 
-        let receiver = tokio::runtime::Runtime::new().unwrap().block_on(async {
-            FanOutClient::new(o.clone(), c.clone(), metrics.clone()).await.unwrap()
-        });
         Ok((WriteComponent {
             opts: o,
             cfg: c,
@@ -95,8 +93,7 @@ impl WriteComponent {
 }
 
 impl Component for WriteComponent {
-    fn run(&mut self) -> Result<()> {
-        Ok(())
+    async fn run(&mut self) {
     }
 }
 
@@ -148,14 +145,19 @@ impl Appender for FanOutClient {
 
         // push to all clients
         // Assuming Push method is defined elsewhere
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
-            self.push(PushRequest {
-                series: vec![RawProfileSeries {
-                    labels: proto_labels,
-                    samples: proto_samples,
-                }],
-            }).await.unwrap();
-        });
+
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                self.push(PushRequest {
+                    series: vec![RawProfileSeries {
+                        labels: proto_labels,
+                        samples: proto_samples,
+                    }],
+                }).await.unwrap();
+            });
 
         Ok(())
     }
@@ -170,7 +172,7 @@ impl Appendable for FanOutClient {
 impl FanOutClient {
     async fn new(opts: Options, config: Arguments, metrics: Arc<WriteMetrics>) -> Result<Self> {
         let mut clients = Vec::with_capacity(config.endpoints.len());
-        let client = PusherServiceClient::connect("http://[::1]:50051").await.unwrap();
+        let client = PusherServiceClient::connect("http://[::1]:8080").await.unwrap();
         clients.push(client);
         // for endpoint in &config.endpoints {
         //     let client = PusherServiceClient::connect(&endpoint).await.unwrap();

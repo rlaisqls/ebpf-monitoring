@@ -22,9 +22,13 @@ fn my_get_service_data(_name: &str) -> Result<Box<dyn Any>, String> {
 }
 
 #[tokio::main]
+#[allow(unused_variables)]
 async fn main() -> Result<(), ()> {
+    env_logger::init();
     panic::set_hook(Box::new(|panic_info| {
         error!("{:?}", panic_info.to_string());
+        let backtrace = std::backtrace::Backtrace::capture();
+        error!("My backtrace: {:#?}", backtrace);
     }));
 
     let option = Options {
@@ -68,8 +72,8 @@ async fn main() -> Result<(), ()> {
     let mut ebpf_component = EbpfLinuxComponent::new(option.clone(), argument).await.unwrap();
 
     info!("Server started");
-    write_component.run().expect("TODO: panic message");
-    ebpf_component.run().expect("TODO: panic message");
+    write_component.run().await;
+    ebpf_component.run().await;
     info!("Server stopped");
     Ok(())
 }
