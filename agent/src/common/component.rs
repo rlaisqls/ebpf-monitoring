@@ -3,5 +3,5 @@ use common::error::Result;
 
 
 pub trait Component {
-    fn run(&mut self) -> Result<()>;
+    async fn run(&mut self);
 }
