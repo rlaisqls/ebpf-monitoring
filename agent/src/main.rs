@@ -4,7 +4,7 @@ use std::panic;
 
 use std::sync::Arc;
 use std::time::Duration;
-use log::error;
+use log::{error, info};
 use prometheus::Registry;
 
 
@@ -67,8 +67,9 @@ async fn main() -> Result<(), ()> {
     };
     let mut ebpf_component = EbpfLinuxComponent::new(option.clone(), argument).await.unwrap();
 
+    info!("Server started");
     write_component.run().expect("TODO: panic message");
     ebpf_component.run().expect("TODO: panic message");
-
+    info!("Server stopped");
     Ok(())
 }
