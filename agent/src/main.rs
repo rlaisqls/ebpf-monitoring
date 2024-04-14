@@ -1,13 +1,13 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::panic;
-use std::path::Path;
+
 use std::sync::Arc;
 use std::time::Duration;
 use log::error;
 use prometheus::Registry;
-use signal_hook::consts::TERM_SIGNALS;
-use signal_hook::iterator::Signals;
+
+
 use agent::common::component::Component;
 use agent::common::registry::Options;
 use agent::ebpf::ebpf_linux;
@@ -15,7 +15,7 @@ use agent::ebpf::ebpf_linux::{EbpfLinuxComponent};
 use agent::write::write;
 use agent::write::write::WriteComponent;
 
-fn my_get_service_data(name: &str) -> Result<Box<dyn Any>, String> {
+fn my_get_service_data(_name: &str) -> Result<Box<dyn Any>, String> {
     // Implement your logic here
     // This is just a placeholder implementation
     Ok(Box::new(0))

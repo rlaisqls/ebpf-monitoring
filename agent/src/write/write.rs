@@ -1,35 +1,32 @@
-use std::any::Any;
+
 use std::collections::HashMap;
-use std::error::Error;
-use std::sync::Arc;
+
+use std::sync::{Arc};
 use std::time::Duration;
 use std::borrow::Borrow;
 
-use async_trait::async_trait;
-use futures::future;
-use hyper::header::{HeaderMap, HeaderName, HeaderValue};
-use hyper::service::service_fn;
-use log::{debug, info};
-use prometheus::{CounterVec, Opts, register_counter_vec};
-use prost::Message;
-use tokio::sync::oneshot;
-use tokio::time::timeout;
+
+
+
+
+
+
+
+
+
 use tonic::transport::Channel;
+use common::common::labels::Labels;
 use common::ebpf::metrics::write_metrics::WriteMetrics;
+use common::ebpf::sd::target::{METRIC_NAME, RESERVED_LABEL_PREFIX};
 use common::error::Error::{OSError, WriteError};
 use common::error::Result;
 
-use push_api::pusher_service_client::PusherServiceClient;
-use push_api::{PushRequest, PushResponse};
-
 use crate::common::registry::{Exports, Options};
 use crate::common::component::Component;
-use crate::appender::Fanout;
-
-pub mod push_api {
-    include!("../api/push/push.v1.rs");
-}
-
+use crate::appender::{Appendable, Appender, AppenderImpl, Fanout};
+use crate::ebpf::ebpf_linux::push_api::pusher_service_client::PusherServiceClient;
+use crate::ebpf::ebpf_linux::push_api::{LabelPair, PushRequest, PushResponse, RawProfileSeries, RawSample};
+use crate::metrics::config;
 
 #[derive(Debug, Clone)]
 pub struct EndpointOptions {
@@ -80,12 +77,15 @@ pub struct WriteComponent {
 
 impl WriteComponent {
 
-    async fn update(&mut self, new_cfg: Arguments) -> Result<()> {
+    async fn update(&mut self, _new_cfg: Arguments) -> Result<()> {
         Ok(())
     }
     pub async fn new(o: Options, c: Arguments) -> Result<(Self, FanOutClient)> {
         let metrics = Arc::new(WriteMetrics::new(o.registerer.borrow()));
-        let receiver = FanOutClient::new(o.clone(), c.clone(), metrics.clone()).await.unwrap();
+
+        let receiver = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            FanOutClient::new(o.clone(), c.clone(), metrics.clone()).await.unwrap()
+        });
         Ok((WriteComponent {
             opts: o,
             cfg: c,
@@ -95,16 +95,76 @@ impl WriteComponent {
 }
 
 impl Component for WriteComponent {
-    fn run(&mut self) -> Result<()> {
+    async fn run(&mut self) -> Result<()> {
         Ok(())
     }
 }
 
+#[derive(Clone)]
 pub struct FanOutClient {
     clients: Vec<PusherServiceClient<Channel>>,
     config: Arguments,
     opts: Options,
     metrics: Arc<WriteMetrics>,
+}
+
+pub const DELTA_LABEL: &str = "__delta__";
+
+impl Appender for FanOutClient {
+    fn append(&self, lbs: Labels, samples: Vec<RawSample>) -> Result<()> {
+        // todo: pool label pair arrays and label builder to avoid allocations
+        let mut proto_labels: Vec<LabelPair> = Vec::with_capacity(lbs.len() + self.config.external_labels.len());
+        let mut proto_samples: Vec<RawSample> = Vec::with_capacity(samples.len());
+        let mut lbs_builder = HashMap::<String, String>::new();
+
+        for label in lbs.0 {
+            // filter reserved labels, with exceptions for __name__ and __delta__
+            if label.name.starts_with(RESERVED_LABEL_PREFIX)
+                && label.name != METRIC_NAME
+                && label.name != DELTA_LABEL
+            {
+                continue;
+            }
+            lbs_builder.insert(label.name, label.value);
+        }
+
+        for (name, value) in &self.config.external_labels {
+            lbs_builder.insert(name.clone(), value.clone());
+        }
+
+        for key in lbs_builder.keys(){
+            proto_labels.push(LabelPair {
+                name: key.clone(),
+                value: lbs_builder.get(key).unwrap().clone(),
+            });
+        }
+
+        for sample in samples {
+            proto_samples.push(RawSample {
+                raw_profile: sample.raw_profile,
+                id: "".to_string(),
+            });
+        }
+
+        // push to all clients
+        // Assuming Push method is defined elsewhere
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            self.push(PushRequest {
+                series: vec![RawProfileSeries {
+                    labels: proto_labels,
+                    samples: proto_samples,
+                }],
+            }).await.unwrap();
+        });
+
+        Ok(())
+    }
+}
+
+impl Appendable for FanOutClient {
+    fn appender(&self) -> Box<dyn Appender> {
+        Box::new(self.clone())
+    }
 }
 
 impl FanOutClient {
@@ -123,22 +183,27 @@ impl FanOutClient {
 
     async fn push(&self, req: PushRequest) -> Result<PushResponse> {
         //let mut errors = Vec::new();
-        let (req_size, profile_count) = request_size(&req);
 
         self.clients.iter().enumerate().for_each(|(i, client)| {
+            let r = req.clone();
             let mut client = client.clone();
             let config = self.config.endpoints[i].clone();
             let metrics = self.metrics.clone();
 
-            tokio::spawn(async {
+            tokio::spawn(async move {
                 loop {
-                    let result = client.push(req.clone()).await;
+                    let (req_size, profile_count) = request_size(&r);
+
+                    let result = PusherServiceClient::push(&mut client, r.clone()).await;
+                    // let result = tokio::time::timeout(
+                    //     Duration::from_secs(10), c.push(r.clone())
+                    // ).await.unwrap();
+
                     if result.is_ok() {
                         metrics.sent_bytes.with_label_values(&[&config.url]).inc_by(req_size as f64);
                         metrics.sent_profiles.with_label_values(&[&config.url]).inc_by(profile_count as f64);
                         break;
-                    }
-                    if let Err(err) = result {
+                    } else if let Err(err) = result {
                         log::warn!("failed to push to endpoint: {:?}", err);
                         //errors.push(err.clone());
                         metrics.retries.with_label_values(&[&config.url]).inc();
@@ -154,22 +219,6 @@ impl FanOutClient {
 
         Ok(PushResponse::default())
     }
-}
-
-async fn push_to_client<T>(
-    client: &mut PusherServiceClient<T>,
-    config: &EndpointOptions,
-    req: &PushRequest,
-    metrics: &WriteMetrics,
-) -> Result<(), anyhow::Error> {
-    let mut req = tonic::Request::new(req.clone());
-    let deadline = config.remote_timeout;
-    let timeout = Duration::from_secs(deadline.as_secs() + deadline.subsec_millis() as u64 / 1000);
-
-    let res = tokio::time::timeout(timeout, client.push(req)).await
-        .unwrap();
-
-    Ok(())
 }
 
 fn request_size(req: &PushRequest) -> (i64, i64) {

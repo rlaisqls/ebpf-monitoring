@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::bail;
+
 use common::error::Result;
 use regex::Regex;
 use common::ebpf::metrics::registry::Registerer;
@@ -36,13 +36,13 @@ pub struct Registration {
 
 fn register(r: Registration, registered: &mut HashMap<String, Registration>, parsed_names: &mut HashMap<String, ParsedName>) {
     if registered.contains_key(&r.name) {
-        panic!("Component name {} already registered", r.name);
+        panic!("Component name {} already registered", r.name.clone());
     }
 
     let parsed = parse_component_name(&r.name).expect("invalid component name");
 
-    registered.insert(r.name.clone(), r);
     parsed_names.insert(r.name.clone(), parsed);
+    registered.insert(r.name.clone(), r);
 }
 
 fn parse_component_name(name: &str) -> Result<ParsedName> {

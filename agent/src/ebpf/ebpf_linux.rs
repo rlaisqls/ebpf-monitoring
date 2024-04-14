@@ -2,39 +2,42 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use std::cell::Cell;
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::sync::Mutex;
 use std::borrow::Borrow;
-use async_trait::async_trait;
+
 use log::error;
 use tokio::time::interval;
 use common::common::collector;
 use common::ebpf::metrics::ebpf_metrics::EbpfMetrics;
 use common::ebpf::metrics::metrics::ProfileMetrics;
-use common::ebpf::metrics::symtab::SymtabMetrics;
+
 use common::ebpf::pprof;
 use common::ebpf::pprof::BuildersOptions;
-use common::ebpf::sd::target::{LABEL_CONTAINER_ID, LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
+use common::ebpf::sd::target::{LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
 use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
 use common::ebpf::symtab::elf_module::SymbolOptions;
-use common::ebpf::symtab::gcache::{debug_info, GCacheOptions};
+use common::ebpf::symtab::gcache::{GCacheOptions};
 use common::ebpf::symtab::symbols::CacheOptions;
 use common::error::Error::OSError;
 
 use common::error::Result;
 
-use crate::appender::{Appendable, Appender, Fanout, RawSample};
+use crate::appender::{Appendable, Appender, Fanout};
 use crate::common::component::Component;
 use crate::common::registry::Options;
 use crate::write::write::FanOutClient;
+pub mod push_api {
+    include!("../api/push/push.v1.rs");
+}
 
 type Target = HashMap<String, String>;
 
 #[derive(Clone)]
 pub struct Arguments {
-    pub forward_to: Arc<Vec<Box<dyn Appender>>>,
+    pub forward_to: Arc<Vec<Box<FanOutClient>>>,
     pub targets: Vec<Target>,
     pub collect_interval: Duration,
     pub sample_rate: i32,
@@ -93,7 +96,7 @@ impl Component for EbpfLinuxComponent<'_> {
 
 impl EbpfLinuxComponent<'_> {
 
-    async fn update(&mut self, args: Arguments) -> Result<()> {
+    async fn update(&mut self, _args: Arguments) -> Result<()> {
         Ok(())
     }
 
@@ -117,7 +120,7 @@ impl EbpfLinuxComponent<'_> {
     }
 
     fn collect_profiles(&mut self) -> Result<()> {
-        let mut builders = Arc::new(Mutex::new(pprof::ProfileBuilders::new(
+        let builders = Arc::new(Mutex::new(pprof::ProfileBuilders::new(
             BuildersOptions { sample_rate: 1000, per_pid_profile: false }
         )));
         collector::collect(builders.clone(), &mut self.session).unwrap();
@@ -142,7 +145,7 @@ impl EbpfLinuxComponent<'_> {
                 .with_label_values(&[service_name])
                 .inc_by(raw_profile.len() as f64);
 
-            let samples = vec![RawSample { raw_profile }];
+            let samples = vec![push_api::RawSample { raw_profile, id: "".to_string() }];
             let appender = self.appendable.appender();
             if let Err(err) = appender.append(
                 builder.labels.clone(),
@@ -156,17 +159,19 @@ impl EbpfLinuxComponent<'_> {
     }
 
     fn update_debug_info(&mut self) {
-        if let Ok(mut target_finder) = self.session.target_finder.lock() {
-            let debug_info = DebugInfo {
-                targets: target_finder.debug_info(),
-                session: self.session.debug_info().unwrap(),
-            };
-            self.debug_info = debug_info;
-        }
+        let targets = {
+            let mut target_finder = self.session.target_finder.lock().unwrap() ;
+            target_finder.debug_info().clone()
+        };
+        let debug_info = DebugInfo {
+            targets,
+            session: self.session.debug_info().unwrap(),
+        };
+        self.debug_info = debug_info;
     }
 }
 
-fn convert_session_options(args: &Arguments, ms: Arc<ProfileMetrics>) -> SessionOptions {
+fn convert_session_options(_args: &Arguments, ms: Arc<ProfileMetrics>) -> SessionOptions {
     let keep_rounds = 3;//args.cache_rounds.unwrap_or(3);
     SessionOptions {
         collect_user: true, // args.collect_user_profile.unwrap_or(true),

@@ -6,14 +6,12 @@ use prometheus::Histogram;
 use common::common::labels::Labels;
 use common::ebpf::metrics::registry::Registerer;
 use common::error::Result;
-
-#[derive(Clone)]
-pub struct RawSample {
-    pub(crate) raw_profile: Vec<u8>,
-}
+use crate::ebpf::ebpf_linux::push_api;
+use crate::ebpf::ebpf_linux::push_api::RawSample;
+use crate::write::write::FanOutClient;
 
 pub trait Appender {
-    fn append(&self, labels: Labels, samples: Vec<RawSample>) -> Result<()>;
+    fn append(&self, labels: Labels, samples: Vec<push_api::RawSample>) -> Result<()>;
 }
 
 pub trait Appendable {
@@ -21,16 +19,16 @@ pub trait Appendable {
 }
 
 pub struct Fanout {
-    children: Arc<Vec<Box<dyn Appender>>>,
+    children: Arc<Vec<Box<FanOutClient>>>,
     component_id: String,
     write_latency: Histogram,
 }
 
 impl Fanout {
     pub(crate) fn new(
-        children: Arc<Vec<Box<dyn Appender>>>,
+        children: Arc<Vec<Box<FanOutClient>>>,
         component_id: String,
-        mut register: Arc<dyn Registerer>
+        register: Arc<dyn Registerer>
     ) -> Self {
         let histogram = register.register_histogram(
             "iwm_fanout_latency",
@@ -55,7 +53,7 @@ impl Appendable for Fanout {
 }
 
 pub struct AppenderImpl {
-    children: Arc<Vec<Box<dyn Appender>>>,
+    children: Arc<Vec<Box<FanOutClient>>>,
     component_id: String,
     write_latency: Histogram,
 }

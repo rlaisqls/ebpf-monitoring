@@ -12,10 +12,8 @@ use crate::common::labels::Labels;
 use crate::ebpf::pprof::pprof::PProfBuilder;
 use crate::ebpf::pprof::profiles::{Function, Line, Location, Profile, Sample, ValueType};
 
-mod profiles;
-mod pprof;
-
-
+pub mod profiles;
+pub mod pprof;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct BuildersOptions {
@@ -104,7 +102,7 @@ impl ProfileBuilders {
 }
 
 #[derive(Clone)]
-struct ProfileBuilder {
+pub struct ProfileBuilder {
     pub locations: HashMap<String, Location>,
     pub functions: HashMap<String, Function>,
     pub sample_hash_to_sample: HashMap<u64, Sample>,
