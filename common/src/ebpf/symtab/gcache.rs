@@ -5,9 +5,9 @@ use lru::LruCache;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
-use std::ops::Deref;
-use std::sync::{Arc, Mutex, MutexGuard};
-use crate::ebpf::symtab::symbols::PidKey;
+
+use std::sync::{Arc, Mutex};
+
 
 pub trait Resource {
     fn refresh(&mut self);
@@ -58,12 +58,12 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
     }
 
     pub fn cache(&mut self, k: K, v: Arc<Mutex<V>>) {
-        let mut e = Entry { v, round: self.round };
+        let e = Entry { v, round: self.round };
         {
             let mut value = e.v.lock().unwrap();
             value.refresh();
         }
-        let mut entry = Arc::new(Mutex::new(e));
+        let entry = Arc::new(Mutex::new(e));
         self.lru_cache.put(k.clone(), entry.clone());
         self.round_cache.insert(k, entry.clone());
     }
@@ -76,21 +76,21 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
 
     pub fn cleanup(&mut self) {
         self.lru_cache.iter_mut()
-            .for_each(|(k, e)| {
+            .for_each(|(_k, e)| {
                 let entry = e.lock().unwrap();
                 let mut value = entry.v.lock().unwrap();
                 value.cleanup();
             });
 
         self.round_cache.iter_mut()
-            .for_each(|(k, e)| {
+            .for_each(|(_k, e)| {
                 let entry = e.lock().unwrap();
                 let mut value = entry.v.lock().unwrap();
                 value.cleanup();
             });
 
         self.round_cache
-            .retain(|k, e| {
+            .retain(|_k, e| {
                 let entry = e.lock().unwrap();
                 entry.round < self.round-self.options.keep_rounds
             });

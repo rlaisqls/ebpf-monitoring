@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 use log::{debug, error};
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;
-use crate::ebpf::symtab::elf::buildid::BuildID;
-use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
+
+
 use crate::ebpf::symtab::elf_cache::{ElfCache, ElfCacheDebugInfo};
 use crate::ebpf::symtab::elf_module::{ElfTableOptions, SymbolOptions};
 use crate::ebpf::symtab::gcache::{debug_info, GCache, GCacheDebugInfo, GCacheOptions};
@@ -86,7 +86,7 @@ impl SymbolCache {
     }
 
     fn init_kallsyms(&mut self) -> Arc<Mutex<SymbolTab>> {
-        let mut kallsyms = new_kallsyms().unwrap_or_else(|err| {
+        let kallsyms = new_kallsyms().unwrap_or_else(|err| {
             error!("kallsyms init fail err: {}", err);
             SymbolTab::new(Vec::new())
         });
@@ -108,7 +108,7 @@ impl SymbolCache {
     pub fn pid_cache_debug_info(&self) -> GCacheDebugInfo<ProcTableDebugInfo> {
         debug_info::<PidKey, ProcTable, ProcTableDebugInfo>(
             &self.pid_cache,
-            |b: &PidKey, v: &Arc<Mutex<ProcTable>>, round: i32| {
+            |_b: &PidKey, v: &Arc<Mutex<ProcTable>>, round: i32| {
                 let value = v.lock().unwrap();
                 let mut res = value.debug_info();
                 res.last_used_round = round;

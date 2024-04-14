@@ -1,4 +1,4 @@
-use prometheus::{CounterVec, Opts};
+use prometheus::{CounterVec};
 use crate::ebpf::metrics::registry::Registerer;
 
 #[derive(Debug, Clone)]

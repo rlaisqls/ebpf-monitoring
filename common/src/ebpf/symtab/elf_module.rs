@@ -1,4 +1,4 @@
-use std::borrow::Borrow;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use log::info;
@@ -6,13 +6,13 @@ use std::borrow::BorrowMut;
 use std::sync::{Arc, Mutex};
 use goblin::elf::header::ET_EXEC;
 use goblin::elf::program_header::{PF_X, PT_LOAD};
-use goblin::pe::options;
+
 use rustix::path::Arg;
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 use crate::ebpf::symtab::elf::buildid::{BuildID, BuildIdentified};
 use crate::ebpf::symtab::elf::elfmmap::{MappedElfFile, new_symbol_table};
-use crate::ebpf::symtab::elf::symbol_table::{SymbolNameTable, SymTabDebugInfo};
+use crate::ebpf::symtab::elf::symbol_table::{SymbolNameTable};
 use crate::ebpf::symtab::elf_cache::ElfCache;
 use crate::ebpf::symtab::procmap::ProcMap;
 use crate::ebpf::symtab::stat::stat_from_file_info;
@@ -115,7 +115,7 @@ impl ElfTable {
         let debug_file_path = self.find_debug_file(&build_id, me.borrow_mut()).unwrap();
         if !debug_file_path.is_empty() {
             let debug_me_result = MappedElfFile::new(PathBuf::from(&self.fs).join(debug_file_path));
-            let mut debug_me = match debug_me_result {
+            let debug_me = match debug_me_result {
                 Ok(file) => file,
                 Err(err) => {
                     self.on_load_error(&err);
@@ -213,7 +213,7 @@ impl ElfTable {
         let raw_link = String::from_utf8_lossy(&data[..data.len() - 4]);
         let debug_link = raw_link.as_str().unwrap();
 
-        let mut check_debug_file = |subdir: &str| -> Option<String> {
+        let check_debug_file = |subdir: &str| -> Option<String> {
             let fs_debug_file = elf_file_path.with_file_name(subdir).join(&debug_link);
             if fs::metadata(&fs_debug_file).is_ok() {
                 return Some(fs_debug_file.to_string_lossy().to_string());
@@ -272,7 +272,7 @@ impl ElfTable {
     }
 }
 
-fn create_symbol_table(mut me: MappedElfFile) -> Result<SymbolNameTable> {
+fn create_symbol_table(me: MappedElfFile) -> Result<SymbolNameTable> {
     match new_symbol_table(me) {
         Ok(table) => Ok(table),
         Err(sym_err) => {

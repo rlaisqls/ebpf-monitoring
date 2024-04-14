@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
-use gimli::DebugInfo;
-use goblin::elf::Elf;
+
+
 use crate::error::Result;
 use crate::ebpf::symtab::elf::buildid::BuildID;
 use crate::ebpf::symtab::elf::symbol_table::{SymbolNameTable, SymTabDebugInfo};
@@ -75,7 +75,7 @@ impl ElfCache {
     pub fn debug_info(&self) -> ElfCacheDebugInfo {
         let build_id_cache = debug_info::<BuildID, SymbolNameTable, SymTabDebugInfo>(
             self.build_id_cache.lock().unwrap().deref(),
-            |b: &BuildID, v: &Arc<Mutex<SymbolNameTable>>, round: i32| {
+            |_b: &BuildID, v: &Arc<Mutex<SymbolNameTable>>, round: i32| {
                 let value = v.lock().unwrap();
                 let mut res = value.debug_info();
                 res.last_used_round = round;
@@ -83,7 +83,7 @@ impl ElfCache {
             });
         let same_file_cache = debug_info::<Stat, SymbolNameTable, SymTabDebugInfo>(
             self.same_file_cache.lock().unwrap().deref(),
-            |s: &Stat, v: &Arc<Mutex<SymbolNameTable>>, round: i32| {
+            |_s: &Stat, v: &Arc<Mutex<SymbolNameTable>>, round: i32| {
                 let value = v.lock().unwrap();
                 let mut res = value.debug_info();
                 res.last_used_round = round;

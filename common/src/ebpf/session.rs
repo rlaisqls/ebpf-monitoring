@@ -1,34 +1,34 @@
-use std::{collections::HashMap, fs, sync::{Arc, Mutex}, thread};
-use std::any::Any;
-use std::borrow::Borrow;
-use std::borrow::BorrowMut;
-use std::cell::Cell;
+use std::{collections::HashMap, fs, sync::{Arc, Mutex}};
+
+
+
+
 use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
-use std::io::{Cursor, Read};
-use std::ops::Deref;
-use std::os::fd::{AsFd, AsRawFd, OwnedFd};
-use std::path::Path;
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::time::Duration;
+use std::io::{Read};
 
-use byteorder::ReadBytesExt;
-use gimli::LittleEndian;
-use libbpf_rs::{Error, libbpf_sys, Link, Map, MapFlags, MapHandle, Program};
+use std::os::fd::{AsFd, AsRawFd};
+use std::path::Path;
+use std::sync::mpsc::{channel, Receiver};
+
+
+
+
+use libbpf_rs::{libbpf_sys, Link, MapFlags, MapHandle};
 use libbpf_rs::libbpf_sys::{bpf_map_batch_opts, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use libbpf_sys::{__u32, bpf_map_lookup_batch, bpf_map_lookup_elem};
 use log::{debug, error, info};
-use prometheus::opts;
+
 
 use profile::*;
 
-use crate::common::collector::{ProfileSample, SamplesCollector, SampleType};
+use crate::common::collector::{ProfileSample, SampleType};
 use crate::ebpf::cpuonline;
-use crate::ebpf::metrics::ebpf_metrics::EbpfMetrics;
+
 use crate::ebpf::metrics::metrics::ProfileMetrics;
-use crate::ebpf::metrics::symtab::SymtabMetrics;
+
 use crate::ebpf::perf_event::PerfEvent;
 use crate::ebpf::reader::Reader;
 use crate::ebpf::sd::target::{Target, TargetFinder, TargetsOptions};
@@ -41,9 +41,9 @@ use crate::ebpf::symtab::symtab::SymbolTable;
 use crate::ebpf::sync::{PidOp, ProfilingType};
 use crate::ebpf::sync::PidOp::Dead;
 use crate::ebpf::wait_group::WaitGroup;
-use crate::error::Error::{InvalidData, NotFound, OSError, SessionError};
+use crate::error::Error::{InvalidData, OSError, SessionError};
 use crate::error::Result;
-use crate::ebpf::metrics::metrics;
+
 
 mod profile {
     include!("bpf/profile.skel.rs");
@@ -140,7 +140,7 @@ impl Session<'_> {
     pub fn new(target_finder: Arc<Mutex<TargetFinder>>, opts: SessionOptions) -> Result<Self> {
         let sym_cache = Arc::new(Mutex::new(SymbolCache::new(opts.cache_options, &opts.metrics.symtab).unwrap()));
         bump_memlock_rlimit().unwrap();
-        let mut open_skel = ProfileSkelBuilder::default().open().unwrap();
+        let open_skel = ProfileSkelBuilder::default().open().unwrap();
         let bpf = open_skel.load().unwrap();
         
         Ok(Self {
@@ -182,9 +182,9 @@ impl Session<'_> {
         }
         self.events_reader = Some(Arc::new(Mutex::new(events_reader)));
 
-        let (pid_info_request_tx, pid_info_request_rx) = channel::<u32>();
-        let (pid_exec_request_tx, pid_exec_request_rx) = channel::<u32>();
-        let (dead_pid_events_tx, dead_pid_events_rx) = channel::<u32>();
+        let (_pid_info_request_tx, pid_info_request_rx) = channel::<u32>();
+        let (_pid_exec_request_tx, pid_exec_request_rx) = channel::<u32>();
+        let (_dead_pid_events_tx, dead_pid_events_rx) = channel::<u32>();
 
         self.pid_info_requests = Some(pid_info_request_rx);
         self.pid_exec_requests = Some(pid_exec_request_rx);
@@ -261,7 +261,7 @@ impl Session<'_> {
         }
     }
 
-    fn select_profiling_type(&self, pid: u32, target: &Target) -> ProcInfoLite {
+    fn select_profiling_type(&self, pid: u32, _target: &Target) -> ProcInfoLite {
         if let Ok(exe_path) = fs::read_link(format!("/proc/{}/exe", pid)) {
             if let Ok(comm) = fs::read_to_string(format!("/proc/{}/comm", pid)) {
                 let comm = comm.trim_end_matches('\n').to_string();
@@ -300,7 +300,7 @@ impl Session<'_> {
                             continue;
                         }
 
-                        let mut e = pid_event {
+                        let e = pid_event {
                             op: u32::from_le_bytes([record.raw_sample[0], record.raw_sample[1], record.raw_sample[2], record.raw_sample[3]]),
                             pid: u32::from_le_bytes([record.raw_sample[4], record.raw_sample[5], record.raw_sample[6], record.raw_sample[7]])
                         };
@@ -400,7 +400,7 @@ impl Session<'_> {
         let mut progs = self.bpf.progs_mut();
 
         let disassociate_ctty = "disassociate_ctty";
-        let mut p = progs.disassociate_ctty();
+        let p = progs.disassociate_ctty();
         match p.attach_kprobe(false, disassociate_ctty) {
             Ok(kp) => self.kprobes.push(kp),
             Err(err) => {
@@ -410,13 +410,13 @@ impl Session<'_> {
 
         let sys_execve = format!("{}{}", arch_sys, "sys_execve");
         let sys_execveat = format!("{}{}", arch_sys, "sys_execveat");
-        let mut hooks = [
+        let hooks = [
             sys_execve.as_str(),
             sys_execveat.as_str(),
         ];
 
         for kprobe in hooks {
-            let mut p = progs.exec();
+            let p = progs.exec();
             match p.attach_kprobe(false, kprobe) {
                 Ok(kp) => self.kprobes.push(kp),
                 Err(err) => {
@@ -434,7 +434,7 @@ impl Session<'_> {
         let mut keys: Vec<sample_key> = Vec::with_capacity(map_size);
         let mut values: Vec<u32> = Vec::with_capacity(map_size);
         let mut count: u32 = 10;
-        let mut nkey = 0u32;
+        let nkey = 0u32;
         unsafe {
             let n = bpf_map_lookup_and_delete_batch(
                 m.as_fd().as_raw_fd(),
@@ -460,7 +460,7 @@ impl Session<'_> {
             let mut result_values: Vec<u32> = Vec::with_capacity(map_size);
 
             while let Some(bytes) = m.keys().next() {
-                let mut key = byte_to_value::<sample_key>(&bytes).unwrap();
+                let key = byte_to_value::<sample_key>(&bytes).unwrap();
                 let mut value: u32 = 0;
                 bpf_map_lookup_elem(
                     m.as_fd().as_raw_fd(),
@@ -533,7 +533,7 @@ impl Session<'_> {
     }
 
     pub fn debug_info(&mut self) -> Option<SessionDebugInfo> {
-        if let Ok(mut sym_cache) = self.sym_cache.lock() {
+        if let Ok(sym_cache) = self.sym_cache.lock() {
             return Some(SessionDebugInfo {
                 elf_cache: sym_cache.elf_cache_debug_info(),
                 pid_cache: sym_cache.pid_cache_debug_info()
@@ -557,14 +557,14 @@ impl Session<'_> {
                 known_stacks.insert(ck.kern_stack as u32, true);
             }
 
-            let mut target_finder = self.target_finder.lock().unwrap();
+            let target_finder = self.target_finder.lock().unwrap();
             if let Some(labels) = target_finder.find_target(&ck.pid) {
                 if self.pids.dead.contains_key(&ck.pid) {
                     continue;
                 }
                 let mut stats = StackResolveStats::default();
                 {
-                    let mut proc = {
+                    let proc = {
                         let mut sym_cache = self.sym_cache.lock().unwrap();
                         if sym_cache.get_proc_table(ck.pid).is_none() {
                             self.pids.dead.insert(ck.pid, ());
@@ -614,7 +614,7 @@ impl Session<'_> {
         "pid_unknown".to_string()
     }
 
-    fn walk_stack(&self, sb: &mut StackBuilder, stack: &[u8], mut resolver: Arc<Mutex<dyn SymbolTable>>, stats: &mut StackResolveStats) {
+    fn walk_stack(&self, sb: &mut StackBuilder, stack: &[u8], resolver: Arc<Mutex<dyn SymbolTable>>, stats: &mut StackResolveStats) {
         if stack.is_empty() {
             return;
         }
@@ -731,7 +731,7 @@ impl Session<'_> {
         let m = &self.bpf.maps();
         let pids = m.pids();
         let map_size = pids.info().unwrap().info.max_entries as usize;
-        let mut nkey = 0u32;
+        let nkey = 0u32;
         let mut keys: Vec<u32> = Vec::with_capacity(map_size);
         let mut values: Vec<pid_config> = Vec::with_capacity(map_size);
         let mut count: u32 = 10;

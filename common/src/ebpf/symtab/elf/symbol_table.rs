@@ -1,4 +1,4 @@
-use std::ops::Shl;
+
 use goblin::elf::SectionHeader;
 
 use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;

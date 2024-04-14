@@ -50,7 +50,7 @@ impl Labels {
         for label in &self.0 {
             map.insert(label.name.clone(), label.value.clone());
         }
-        Some(map[name.clone()].clone())
+        Some(map[name].clone())
     }
     pub fn set(&mut self, name: &str, value: &str) {
         if self.get(name).is_some() {

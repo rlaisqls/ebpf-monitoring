@@ -18,15 +18,15 @@ use tonic::transport::Channel;
 use common::common::labels::Labels;
 use common::ebpf::metrics::write_metrics::WriteMetrics;
 use common::ebpf::sd::target::{METRIC_NAME, RESERVED_LABEL_PREFIX};
-use common::error::Error::{OSError, WriteError};
+
 use common::error::Result;
 
-use crate::common::registry::{Exports, Options};
+use crate::common::registry::{Options};
 use crate::common::component::Component;
-use crate::appender::{Appendable, Appender, AppenderImpl, Fanout};
+use crate::appender::{Appendable, Appender};
 use crate::ebpf::ebpf_linux::push_api::pusher_service_client::PusherServiceClient;
 use crate::ebpf::ebpf_linux::push_api::{LabelPair, PushRequest, PushResponse, RawProfileSeries, RawSample};
-use crate::metrics::config;
+
 
 #[derive(Debug, Clone)]
 pub struct EndpointOptions {

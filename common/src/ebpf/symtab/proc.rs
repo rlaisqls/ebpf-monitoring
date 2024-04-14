@@ -4,7 +4,7 @@ use std::fs;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use url::quirks::pathname;
+
 use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
 use crate::ebpf::symtab::elf_module::{ElfTable, ElfTableOptions};
 use crate::ebpf::symtab::procmap::{File, ProcMap};

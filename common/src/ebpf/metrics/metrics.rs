@@ -1,4 +1,4 @@
-use prometheus::Registry;
+
 use crate::ebpf::metrics::registry::Registerer;
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;

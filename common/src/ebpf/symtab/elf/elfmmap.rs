@@ -35,7 +35,7 @@ pub struct SymbolsOptions {
 
 impl MappedElfFile {
     pub fn new(fpath: PathBuf) -> Result<Self> {
-        let mut fd = Some(File::open(&fpath).unwrap());
+        let fd = Some(File::open(&fpath).unwrap());
         let mut buffer = Vec::new();
         fd.as_ref().borrow_mut().unwrap().read_to_end(&mut buffer).unwrap();
         let elf = Elf::parse(buffer.as_slice()).unwrap();
@@ -114,7 +114,7 @@ impl MappedElfFile {
 
             if let Some(idx) = tmp_buf.iter().position(|&x| x == 0) {
                 sb.push_str(&String::from_utf8_lossy(&tmp_buf[..idx]));
-                let mut s = sb.clone();
+                let s = sb.clone();
                 self.string_cache.insert(start, s.clone());
                 return Ok((s, true));
             } else {

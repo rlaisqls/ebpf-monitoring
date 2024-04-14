@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::{Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use flate2::Compression;

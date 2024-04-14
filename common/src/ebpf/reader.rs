@@ -9,9 +9,9 @@ use std::slice::from_raw_parts_mut;
 
 use crate::error::Error::{OSError};
 use libbpf_rs::libbpf_sys::{PERF_COUNT_SW_BPF_OUTPUT, PERF_FLAG_FD_CLOEXEC, PERF_SAMPLE_RAW, PERF_TYPE_SOFTWARE};
-use libbpf_rs::{Map, MapHandle};
-use libbpf_sys::{perf_event_mmap_page, ring};
-use libc::{c_int, c_void, close, MAP_FAILED, MAP_SHARED, mmap, munmap, pid_t, PROT_READ};
+use libbpf_rs::{MapHandle};
+use libbpf_sys::{perf_event_mmap_page};
+use libc::{c_int, close, MAP_FAILED, MAP_SHARED, mmap, pid_t, PROT_READ};
 use polling::Poller;
 
 use crate::ebpf::perf_event::{PerfEventAttr, sys_perf_event_open};
@@ -156,7 +156,7 @@ impl Reader {
                 }
 
                 for event in self.epoll_events.iter() {
-                    let mut ring = self.rings[event.key].clone();
+                    let ring = self.rings[event.key].clone();
                     {
                         // Read the current head pointer now, not every time
                         // we read a record. This prevents a single fast producer
@@ -201,7 +201,7 @@ impl Reader {
     }
 }
 
-fn read_record(mut rd: &mut MutexGuard<PerfEventRing>, rec: &mut Record, buf: &mut [u8], overwritable: bool) -> Result<()> {
+fn read_record(rd: &mut MutexGuard<PerfEventRing>, rec: &mut Record, buf: &mut [u8], overwritable: bool) -> Result<()> {
     // Assert that the buffer is large enough.
     let perf_event_header_size = std::mem::size_of::<PerfEventHeader>();
     let buf = &mut buf[..perf_event_header_size];
@@ -234,14 +234,14 @@ fn read_record(mut rd: &mut MutexGuard<PerfEventRing>, rec: &mut Record, buf: &m
 }
 
 // Read lost records from the reader
-fn read_lost_records(mut rd: &mut MutexGuard<PerfEventRing>) -> Result<u64, io::Error> {
+fn read_lost_records(rd: &mut MutexGuard<PerfEventRing>) -> Result<u64, io::Error> {
     let mut buf = [0; 8]; // Assuming the size of struct perf_event_lost
     rd.read_exact(&mut buf).unwrap();
     Ok(u64::from_le_bytes(buf))
 }
 
 // Read raw sample from the reader
-fn read_raw_sample(mut rd: &mut MutexGuard<PerfEventRing>, overwritable: bool) -> Result<Vec<u8>, io::Error> {
+fn read_raw_sample(rd: &mut MutexGuard<PerfEventRing>, _overwritable: bool) -> Result<Vec<u8>, io::Error> {
     let mut buf = vec![0; 4]; // Assuming the size of struct perf_event_sample
     rd.read_exact(&mut buf)?;
     let size = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
@@ -287,7 +287,7 @@ impl PerfEventRing {
             return Err(OSError("".to_string()));
         }
 
-        let mut meta = mmap as *mut perf_event_mmap_page;
+        let meta = mmap as *mut perf_event_mmap_page;
         let ring = unsafe { from_raw_parts_mut(mmap as *mut u8, perf_buffer_size(per_cpu_buffer as usize)) };
         let ring_reader= ForwardReader::new(unsafe { *meta }, ring.deref());
 
