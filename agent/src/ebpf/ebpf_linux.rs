@@ -25,7 +25,7 @@ use common::error::Error::OSError;
 
 use common::error::Result;
 
-use crate::appender::{Appendable, Appender, Fanout};
+use crate::appender::{Appendable, Fanout};
 use crate::common::component::Component;
 use crate::common::registry::Options;
 use crate::write::write::FanOutClient;
