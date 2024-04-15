@@ -1,7 +1,4 @@
-use std::{collections::HashMap, fs, sync::{Arc, Mutex}};
-
-
-
+use std::{collections::HashMap, mem, fs, sync::{Arc, Mutex}};
 
 use std::collections::HashSet;
 use std::default::Default;
@@ -13,12 +10,10 @@ use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
 
 
-
-
 use libbpf_rs::{libbpf_sys, Link, MapFlags, MapHandle};
 use libbpf_rs::libbpf_sys::{bpf_map_batch_opts, bpf_map_lookup_and_delete_batch};
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
-use libbpf_sys::{__u32, bpf_map_lookup_batch, bpf_map_lookup_elem};
+use libbpf_sys::{__u32, bpf_map_lookup_batch, bpf_map_lookup_elem, size_t};
 use log::{debug, error, info};
 
 
@@ -444,9 +439,9 @@ impl Session<'_> {
                 values.as_mut_ptr() as *mut c_void,
                 (&mut count) as *mut u32,
                 &bpf_map_batch_opts {
-                    sz: 0,
-                    elem_flags: 0,
-                    flags: 0,
+                    sz: mem::size_of::<bpf_map_batch_opts>() as size_t,
+                    elem_flags: MapFlags::ANY.bits(),
+                    flags: MapFlags::ANY.bits(),
                 } as *const bpf_map_batch_opts,
             );
 
@@ -744,9 +739,9 @@ impl Session<'_> {
                 values.as_mut_ptr() as *mut c_void,
                 (&mut count) as *mut u32,
                 &bpf_map_batch_opts {
-                    sz: 0,
-                    elem_flags: 0,
-                    flags: 0,
+                    sz: mem::size_of::<bpf_map_batch_opts>() as size_t,
+                    elem_flags: MapFlags::ANY.bits(),
+                    flags: MapFlags::ANY.bits(),
                 } as *const bpf_map_batch_opts,
             );
 
