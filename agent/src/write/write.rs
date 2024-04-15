@@ -172,7 +172,7 @@ impl Appendable for FanOutClient {
 impl FanOutClient {
     async fn new(opts: Options, config: Arguments, metrics: Arc<WriteMetrics>) -> Result<Self> {
         let mut clients = Vec::with_capacity(config.endpoints.len());
-        let client = PusherServiceClient::connect("http://[::1]:8080").await.unwrap();
+        let client = PusherServiceClient::connect("http://[::1]:4040").await.unwrap();
         clients.push(client);
         // for endpoint in &config.endpoints {
         //     let client = PusherServiceClient::connect(&endpoint).await.unwrap();
