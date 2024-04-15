@@ -1,4 +1,4 @@
-use std::{collections::HashMap, mem, fs, sync::{Arc, Mutex}};
+use std::{collections::HashMap, fs, mem, sync::{Arc, Mutex}};
 
 use std::collections::HashSet;
 use std::default::Default;
@@ -441,7 +441,7 @@ impl Session<'_> {
                 &bpf_map_batch_opts {
                     sz: mem::size_of::<bpf_map_batch_opts>() as size_t,
                     elem_flags: MapFlags::ANY.bits(),
-                    flags: MapFlags::ANY.bits(),
+                    flags: 0,
                 } as *const bpf_map_batch_opts,
             );
 

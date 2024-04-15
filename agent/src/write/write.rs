@@ -145,7 +145,6 @@ impl Appender for FanOutClient {
 
         // push to all clients
         // Assuming Push method is defined elsewhere
-
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()

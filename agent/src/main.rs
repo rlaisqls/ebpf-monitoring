@@ -10,6 +10,8 @@ use prometheus::Registry;
 
 use agent::common::component::Component;
 use agent::common::registry::Options;
+use agent::discover::discover;
+use agent::discover::docker_discovery::DockerDiscovery;
 use agent::ebpf::ebpf_linux;
 use agent::ebpf::ebpf_linux::{EbpfLinuxComponent};
 use agent::write::write;
@@ -30,6 +32,13 @@ async fn main() -> Result<(), ()> {
         let backtrace = std::backtrace::Backtrace::capture();
         error!("My backtrace: {:#?}", backtrace);
     }));
+
+    let discovery_args = discover::Arguments {
+        ..Default::default()
+    };
+    let discovery_component = DockerDiscovery::new(discovery_args);
+    let targets = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap()
+            .block_on(async { discovery_component.refresh().await });
 
     let option = Options {
         id: "sdf".to_string(),
@@ -53,11 +62,13 @@ async fn main() -> Result<(), ()> {
 
     let argument = ebpf_linux::Arguments {
         forward_to: Arc::new(Vec::from([Box::new(fanout_client)])),
-        targets: vec![
-            [("__address__", "pyroscope:4100"), ("service_name", "pyroscope")],
-            [("__address__", "agent:12345"), ("service_name", "agent")],
-        ].iter().map(|item| item.iter().cloned()
-            .map(|(k, v)| (k.to_string(), v.to_string())).collect()).collect(),
+        targets,
+        // vec![
+        //     [("__address__", "pyroscope:4100"), ("service_name", "pyroscope")],
+        //     [("__address__", "agent:12345"), ("service_name", "agent")],
+        // ].iter().map(|item| item.iter().cloned()
+        //     .map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        // ).collect(),
         collect_interval: Duration::from_secs(15),
         sample_rate: 97,
         pid_cache_size: 32,

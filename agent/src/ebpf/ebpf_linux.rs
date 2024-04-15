@@ -16,7 +16,7 @@ use common::ebpf::metrics::metrics::ProfileMetrics;
 
 use common::ebpf::pprof;
 use common::ebpf::pprof::BuildersOptions;
-use common::ebpf::sd::target::{LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
+use common::ebpf::sd::target::{LABEL_SERVICE_NAME, Target, TargetFinder, TargetsOptions};
 use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
 use common::ebpf::symtab::elf_module::SymbolOptions;
 use common::ebpf::symtab::gcache::{GCacheOptions};
@@ -33,8 +33,6 @@ pub mod push_api {
     include!("../api/push/push.v1.rs");
 }
 
-type Target = HashMap<String, String>;
-
 #[derive(Clone)]
 pub struct Arguments {
     pub forward_to: Arc<Vec<Box<FanOutClient>>>,
@@ -48,7 +46,7 @@ pub struct Arguments {
     pub cache_rounds: i32,
     pub collect_user_profile: bool,
     pub collect_kernel_profile: bool,
-    pub python_enabled: bool,
+    pub python_enabled: bool
 }
 
 pub struct EbpfLinuxComponent<'a> {
