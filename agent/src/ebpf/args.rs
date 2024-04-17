@@ -1,10 +1,10 @@
 use std::time::Duration;
-use common::ebpf::sd::target::Target;
+use common::ebpf::sd::target::EbpfTarget;
 use crate::appender::Appendable;
 
 pub struct Arguments {
     pub forward_to: Vec<Box<dyn Appendable>>,
-    pub targets: Option<Vec<Target>>,
+    pub targets: Option<Vec<EbpfTarget>>,
     pub collect_interval: Option<Duration>,
     pub sample_rate: Option<i32>,
     pub pid_cache_size: Option<i32>,

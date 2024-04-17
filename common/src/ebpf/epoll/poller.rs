@@ -32,7 +32,7 @@ impl Poller {
 
     fn add(&mut self, fd: RawFd, id: i32) -> Result<()> {
         if id as i64 > i32::MAX as i64 {
-            return Err(Error::OSError("".to_string())).unwrap();
+            return Err(Error::OSError("unexcepted range".to_string())).unwrap();
         }
 
         let mut event = EpollEvent::new(EpollFlags::EPOLLIN, id as u64);

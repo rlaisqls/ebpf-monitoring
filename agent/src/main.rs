@@ -6,7 +6,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use log::{error, info};
 use prometheus::Registry;
+use log::LevelFilter;
 
+use log4rs::append::console::ConsoleAppender;
+use log4rs::config::{Appender, Root};
+use log4rs::Config;
 
 use agent::common::component::Component;
 use agent::common::registry::Options;
@@ -26,7 +30,14 @@ fn my_get_service_data(_name: &str) -> Result<Box<dyn Any>, String> {
 #[tokio::main]
 #[allow(unused_variables)]
 async fn main() -> Result<(), ()> {
-    env_logger::init();
+    // env_logger::init();
+    let stdout = ConsoleAppender::builder().build();
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .build(Root::builder().appender("stdout").build(LevelFilter::Trace))
+        .unwrap();
+    let _handle = log4rs::init_config(config).unwrap();
+
     panic::set_hook(Box::new(|panic_info| {
         error!("{:?}", panic_info.to_string());
         let backtrace = std::backtrace::Backtrace::capture();
@@ -37,8 +48,7 @@ async fn main() -> Result<(), ()> {
         ..Default::default()
     };
     let discovery_component = DockerDiscovery::new(discovery_args);
-    let targets = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap()
-            .block_on(async { discovery_component.refresh().await });
+    let targets = discovery_component.refresh().await;
 
     let option = Options {
         id: "sdf".to_string(),

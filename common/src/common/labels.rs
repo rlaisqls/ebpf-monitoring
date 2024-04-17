@@ -64,12 +64,10 @@ impl Labels {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-
     pub fn hash(&self) -> u64 {
         let mut hasher = xxhash_rust::xxh64::Xxh64::new(0);
         let mut buffer = Vec::with_capacity(1024);
         let sep: u8 = 0xff;
-
         for label in &self.0 {
             buffer.clear();
             buffer.extend(label.name.as_bytes());

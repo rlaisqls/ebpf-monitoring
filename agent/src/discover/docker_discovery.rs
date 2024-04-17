@@ -1,38 +1,35 @@
 use std::{
 	collections::HashMap,
-	error::Error,
-	fmt
-	,
-	time::Duration,
 };
-use std::any::Any;
-use std::str::FromStr;
+
+
 use docker_api::Docker;
 use docker_api::opts::ContainerListOpts;
-use log::info;
+
+use log::{info, error};
 use regex::Regex;
 
-use common::error::Result;
-use serde::{Deserialize, Serialize};
-use url::Url;
-use common::ebpf::sd::target::Target;
-use common::error::Error::OSError;
-use crate::discover::discover::{ADDRESS_LABEL, Arguments};
-use crate::discover::network::get_networks_labels;
-use crate::ebpf::ebpf_linux::push_api::{PushRequest, RawProfileSeries};
 
-const DOCKER_LABEL: &str = "prometheus_docker_";
-const DOCKER_LABEL_CONTAINER_PREFIX: &str = "prometheus_docker_container_";
-const DOCKER_LABEL_CONTAINER_ID: &str = "prometheus_docker_container_id";
-const DOCKER_LABEL_CONTAINER_NAME: &str = "prometheus_docker_container_name";
-const DOCKER_LABEL_CONTAINER_NETWORK_MODE: &str = "prometheus_docker_container_network_mode";
-const DOCKER_LABEL_CONTAINER_LABEL_PREFIX: &str = "prometheus_docker_container_label_";
-const DOCKER_LABEL_NETWORK_PREFIX: &str = "prometheus_docker_network_";
-const DOCKER_LABEL_NETWORK_IP: &str = "prometheus_docker_network_ip";
-const DOCKER_LABEL_PORT_PREFIX: &str = "prometheus_docker_port_";
-const DOCKER_LABEL_PORT_PRIVATE: &str = "prometheus_docker_port_private";
-const DOCKER_LABEL_PORT_PUBLIC: &str = "prometheus_docker_port_public";
-const DOCKER_LABEL_PORT_PUBLIC_IP: &str = "prometheus_docker_port_public_ip";
+
+
+
+
+use crate::discover::discover::{ADDRESS_LABEL, Arguments, Target};
+use crate::discover::network::get_networks_labels;
+
+
+const DOCKER_LABEL: &str = "__meta_docker_";
+const DOCKER_LABEL_CONTAINER_PREFIX: &str = "__meta_docker_container_";
+const DOCKER_LABEL_CONTAINER_ID: &str = "__meta_docker_container_id";
+const DOCKER_LABEL_CONTAINER_NAME: &str = "__meta_docker_container_name";
+const DOCKER_LABEL_CONTAINER_NETWORK_MODE: &str = "__meta_docker_container_network_mode";
+const DOCKER_LABEL_CONTAINER_LABEL_PREFIX: &str = "__meta_docker_container_label_";
+const DOCKER_LABEL_NETWORK_PREFIX: &str = "__meta_docker_network_";
+const DOCKER_LABEL_NETWORK_IP: &str = "__meta_docker_network_ip";
+const DOCKER_LABEL_PORT_PREFIX: &str = "__meta_docker_port_";
+const DOCKER_LABEL_PORT_PRIVATE: &str = "__meta_docker_port_private";
+const DOCKER_LABEL_PORT_PUBLIC: &str = "__meta_docker_port_public";
+const DOCKER_LABEL_PORT_PUBLIC_IP: &str = "__meta_docker_port_public_ip";
 
 pub struct DockerDiscovery {
 	port: u16,
@@ -43,14 +40,12 @@ pub struct DockerDiscovery {
 impl DockerDiscovery {
 
 	pub fn new(args: Arguments) -> DockerDiscovery {
-		let conf = args.convert();
 		let docker = Docker::new(&args.host).unwrap();
-		let discovery = DockerDiscovery {
-			port: conf.port,
-			host_networking_host: conf.host_networking_host,
+		DockerDiscovery {
+			port: args.port,
+			host_networking_host: args.host_networking_host,
 			client: docker
-		};
-		Ok(discovery)
+		}
 	}
 
 	pub async fn refresh(&self) -> Vec<Target> {
@@ -58,45 +53,42 @@ impl DockerDiscovery {
 
 		let opts = ContainerListOpts::builder().all(true).build();
 
-		let containers = match self.client.containers().list(&opts).await {
-			Ok(containers) => Ok(containers),
-			Err(e) => Err(OSError(format!("error while listing containers: {}", e.to_string())))
-		}.unwrap();
-
-		let network_labels: HashMap<String, HashMap<String, String>> = match get_networks_labels(&self.client, DOCKER_LABEL).await {
-			Ok(network_labels) => Ok(network_labels),
-			Err(err) => Err(format!("error while computing network labels: {}", err).into()),
-		}.unwrap();
+		let containers = self.client.containers().list(&opts).await.unwrap();
+		let network_labels: HashMap<String, HashMap<String, String>> =
+			get_networks_labels(&self.client, DOCKER_LABEL).await.unwrap();
 
 		for c in containers {
-			if c.names.is_empty() {
+			if c.names.clone().unwrap().is_empty() {
 				continue;
 			}
 
 			let mut common_labels = HashMap::new();
-			common_labels.insert(String::from(DOCKER_LABEL_CONTAINER_ID), c.id.clone());
-			common_labels.insert(String::from(DOCKER_LABEL_CONTAINER_NAME), c.names[0].clone());
-			common_labels.insert(String::from(DOCKER_LABEL_CONTAINER_NETWORK_MODE), c.host_config.clone().unwrap().network_mode.clone());
 
-			for (k, v) in c.labels {
+			info!("{} {}", c.names.clone().unwrap()[0].clone(), c.id.clone().unwrap());
+			common_labels.insert(DOCKER_LABEL_CONTAINER_ID.to_string(), c.id.clone().unwrap());
+			common_labels.insert(DOCKER_LABEL_CONTAINER_NAME.to_string(), c.names.clone().unwrap()[0].clone());
+			common_labels.insert(DOCKER_LABEL_CONTAINER_NETWORK_MODE.to_string(), c.host_config.clone().unwrap().network_mode.clone().unwrap());
+
+			for (k, v) in c.labels.unwrap() {
 				let ln = sanitize_label_name(&k);
 				common_labels.insert(format!("{}{}", DOCKER_LABEL_CONTAINER_LABEL_PREFIX, ln), v);
 			}
 
 			for (id, n) in c.network_settings.clone().unwrap().networks.unwrap() {
 				let mut added = false;
-
 				for p in c.ports.clone().unwrap() {
 					if p.type_ != "tcp" {
 						continue;
 					}
 					let mut labels = HashMap::new();
-					labels.insert(String::from(DOCKER_LABEL_NETWORK_IP), p.ip.unwrap().clone());
-					labels.insert(String::from(DOCKER_LABEL_PORT_PRIVATE), p.private_port.to_string());
+					if p.ip.is_some() {
+						labels.insert(String::from(DOCKER_LABEL_NETWORK_IP), p.ip.clone().unwrap().clone());
+					}
+					labels.insert(String::from(DOCKER_LABEL_PORT_PRIVATE), p.private_port.clone().to_string());
 
-					if p.public_port > 0 {
-						labels.insert(String::from(DOCKER_LABEL_PORT_PUBLIC), p.public_port.to_string());
-						labels.insert(String::from(DOCKER_LABEL_PORT_PUBLIC_IP), p.ip.clone());
+					if p.public_port.is_some() && p.public_port.unwrap() > 0 {
+						labels.insert(String::from(DOCKER_LABEL_PORT_PUBLIC), p.public_port.clone().unwrap().to_string());
+						labels.insert(String::from(DOCKER_LABEL_PORT_PUBLIC_IP), p.ip.clone().unwrap());
 					}
 
 					for (k, v) in &common_labels {
@@ -108,29 +100,31 @@ impl DockerDiscovery {
 							labels.insert(k.clone(), v.clone());
 						}
 					}
-					let addr = format!("{:?}:{}", n.ip_address, p.private_port);
-					labels.insert(ADDRESS_LABEL.to_string(), addr.clone());
+					if n.ip_address.is_some() {
+						let addr = format!("{}:{}", n.ip_address.clone().unwrap(), p.private_port);
+						labels.insert(ADDRESS_LABEL.to_string(), addr.clone());
+					}
 					tg.push(labels);
 					added = true;
 				}
 
 				if !added {
 					let mut labels = HashMap::new();
-					labels.insert(DOCKER_LABEL_NETWORK_IP.to_string(), n.ip_address.unwrap().clone());
+					labels.insert(DOCKER_LABEL_NETWORK_IP.to_string(), n.ip_address.clone().unwrap());
 
 					for (k, v) in &common_labels {
 						labels.insert(k.clone(), v.clone());
 					}
 
-					if let Some(network_label) = network_labels.get(&n.network_id.unwrap()) {
+					if let Some(network_label) = network_labels.get(&n.network_id.clone().unwrap()) {
 						for (k, v) in network_label {
 							labels.insert(k.clone(), v.clone());
 						}
 					}
 
 					let hc = c.host_config.clone();
-					let addr = if hc.unwrap().network_mode.clone() != "host" {
-						format!("{:?}:{}", n.ip_address, self.port)
+					let addr = if hc.unwrap().network_mode.clone().unwrap() != "host".to_string() {
+						format!("{}:{}", n.ip_address.unwrap(), self.port)
 					} else {
 						self.host_networking_host.clone()
 					};
@@ -139,8 +133,8 @@ impl DockerDiscovery {
 				}
 			}
 		}
-		info!(format!("docker targets: {:?}", tg));
-		Ok(vec![tg])
+		// info!("docker targets: {:?}", tg);
+		tg
 	}
 }
 

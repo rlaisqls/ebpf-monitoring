@@ -1,8 +1,9 @@
 use std::sync::{Arc, Mutex};
 use crate::ebpf::pprof::ProfileBuilders;
-use crate::ebpf::sd::target::Target;
+use crate::ebpf::sd::target::EbpfTarget;
 use crate::ebpf::session::Session;
 use crate::error::Result;
+use log::{debug, error, info};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SampleType {
@@ -11,7 +12,7 @@ pub enum SampleType {
 }
 
 pub struct ProfileSample<'a> {
-    pub target: &'a Target,
+    pub target: &'a EbpfTarget,
     pub pid: u32,
     pub sample_type: SampleType,
     pub aggregation: bool,

@@ -1,21 +1,21 @@
 use std::io::{self, Read};
 use std::ops::Deref;
+use std::os::fd::AsRawFd;
 use std::os::unix::io::RawFd;
 use std::ptr;
+use std::slice::from_raw_parts_mut;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use std::slice::from_raw_parts_mut;
 
-use crate::error::Error::{OSError};
-use libbpf_rs::libbpf_sys::{PERF_COUNT_SW_BPF_OUTPUT, PERF_FLAG_FD_CLOEXEC, PERF_SAMPLE_RAW, PERF_TYPE_SOFTWARE};
-use libbpf_rs::{MapHandle};
-use libbpf_sys::{perf_event_mmap_page};
-use libc::{c_int, close, MAP_FAILED, MAP_SHARED, mmap, pid_t, PROT_READ};
+use libbpf_rs::MapHandle;
+use libbpf_sys::{PERF_COUNT_SW_CPU_CLOCK, perf_event_mmap_page, PERF_TYPE_SOFTWARE};
+use libc::{close, MAP_FAILED, MAP_PRIVATE, MAP_SHARED, mmap, PROT_READ, PROT_WRITE};
 use polling::Poller;
+use crate::ebpf::perf_event::perf_event_open;
 
-use crate::ebpf::perf_event::{PerfEventAttr, sys_perf_event_open};
 use crate::error::Error::{Closed, EndOfRing, InvalidData, MustBePaused, UnknownEvent};
+use crate::error::Error::OSError;
 use crate::error::Result;
 
 const PERF_RECORD_LOST: u32 = 2;
@@ -79,7 +79,7 @@ pub struct Reader {
 }
 
 impl Reader {
-    pub fn new(array: MapHandle, per_cpu_buffer: usize) -> Result<Self> {
+    pub fn new(array: MapHandle, per_cpu_buffer: usize, opts: ReaderOptions) -> Result<Self> {
         let n_cpu = 4 * page_size::get();
         let mut rings = Vec::with_capacity(n_cpu);
         let mut pause_fds = Vec::with_capacity(n_cpu);
@@ -90,7 +90,7 @@ impl Reader {
         // Hence, we have to create a ring for each CPU.
         let mut buffer_size = 0;
         for i in 0..n_cpu {
-            let ring = PerfEventRing::new(i as i32, per_cpu_buffer as i32, 0).unwrap();
+            let ring = PerfEventRing::new(i as i32, per_cpu_buffer as i32, &opts).unwrap();
             buffer_size = ring.size();
 
             let fd = ring.fd;
@@ -267,24 +267,46 @@ struct PerfEventRing {
     ring_reader: ForwardReader
 }
 
+#[derive(Debug)]
+pub struct ReaderOptions {
+    wakeup_events: u32,
+    watermark: u32
+}
+
+impl Default for ReaderOptions {
+    fn default() -> Self {
+        Self {
+            wakeup_events: 0,
+            watermark: 0
+        }
+    }
+}
+
 impl PerfEventRing {
-    fn new(cpu: i32, per_cpu_buffer: i32, watermark: i32) -> Result<Self> {
-        if watermark >= per_cpu_buffer {
+    fn new(cpu: i32, per_cpu_buffer: i32, opts: &ReaderOptions) -> Result<Self> {
+        if opts.watermark >= per_cpu_buffer as u32 {
             return Err(InvalidData("watermark must be smaller than per_cpu_buffer".to_string()));
         }
 
-        let fd = create_perf_event(cpu, watermark)?;
+        let fd = perf_event_open(
+            PERF_TYPE_SOFTWARE,
+            PERF_COUNT_SW_CPU_CLOCK as u64,
+            -1,
+            cpu,
+            97,
+            None,
+            false,
+            false,
+            0
+        ).unwrap().as_raw_fd();
 
         let mmap_size = perf_buffer_size(per_cpu_buffer as usize);
-        let protections = PROT_READ;
-
         let mmap = unsafe {
-            mmap(ptr::null_mut(), mmap_size, protections, MAP_SHARED, fd, 0)
+            mmap(ptr::null_mut(), mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
         };
-
         if mmap == MAP_FAILED {
             unsafe { close(fd) };
-            return Err(OSError("".to_string()));
+            return Err(OSError(format!("map failed fd: {} ", fd)));
         }
 
         let meta = mmap as *mut perf_event_mmap_page;
@@ -333,33 +355,6 @@ impl Read for PerfEventRing {
 
 // PERF_BIT_WATERMARK value referenced by https://go.googlesource.com/sys/+/054c452bb702e465e95ce8e7a3d9a6cf0cd1188d/unix/ztypes_linux_ppc64le.go?pli=1#999
 const PERF_BIT_WATERMARK: i32 = 0x4000;
-
-fn create_perf_event(cpu: c_int, watermark: c_int) -> Result<c_int> {
-    let mut watermark = watermark;
-    if watermark == 0 {
-        watermark = 1;
-    }
-
-    let attr = PerfEventAttr {
-        kind: PERF_TYPE_SOFTWARE as u32,
-        sample_type: PERF_SAMPLE_RAW as u64,
-        config: PERF_COUNT_SW_BPF_OUTPUT as u64,
-        bits: PERF_BIT_WATERMARK as u64,
-        wakeup: watermark as u32,
-        ..Default::default()
-    };
-
-    unsafe {
-        let fd = sys_perf_event_open(
-            &attr,
-            -1 as pid_t,
-            cpu as c_int,
-            -1 as c_int,
-            PERF_FLAG_FD_CLOEXEC as libc::c_ulong
-        );
-        Ok(fd.unwrap())
-    }
-}
 
 
 struct ForwardReader {

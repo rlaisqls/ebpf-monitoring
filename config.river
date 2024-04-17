@@ -1,3 +1,11 @@
+logging {
+  level  = "debug"
+  format = "logfmt"
+}
+
+log_level  = "debug"
+log_format = "logfmt"
+
 discovery.docker "all" {
 	host = "unix:///var/run/docker.sock"
 }

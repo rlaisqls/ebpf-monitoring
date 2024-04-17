@@ -43,10 +43,10 @@ impl BuildIdentified for MappedElfFile {
                 return Ok(id);
             }
         } else if !id_result.is_err() {
-            return Err(NotFound("".to_string()));
+            return Err(NotFound("Build id result is err".to_string()));
         }
 
-        Err(NotFound("".to_string()))
+        Err(NotFound("Build id not found".to_string()))
     }
 
     fn go_build_id(&mut self) -> Result<BuildID> {

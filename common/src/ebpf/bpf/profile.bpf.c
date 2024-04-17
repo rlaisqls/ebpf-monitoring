@@ -13,7 +13,6 @@ SEC("perf_event")
 int do_perf_event(struct bpf_perf_event_data *ctx) {
     u32 tgid = 0;
     current_pid(&tgid);
-
     struct sample_key key = {};
     u32 *val, one = 1;
 

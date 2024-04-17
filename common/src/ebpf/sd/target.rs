@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::{Mutex};
 use lru::LruCache;
-use log::{debug, warn};
+use log::{debug, warn, info};
 
 use crate::common::labels::Labels;
 use crate::ebpf::sd::container_id::container_id_from_target;
@@ -20,14 +20,14 @@ pub const METRIC_VALUE: &str = "process_cpu";
 pub const RESERVED_LABEL_PREFIX: &str = "__";
 
 #[derive(Debug, Clone)]
-pub struct Target {
+pub struct EbpfTarget {
     pub labels: Labels,
     service_name: String,
     fingerprint: u64,
     fingerprint_calculated: bool,
 }
 
-impl Target {
+impl EbpfTarget {
     fn new(cid: String, pid: u32, target: DiscoveryTarget) -> Self {
         let service_name = match target.get(LABEL_SERVICE_NAME) {
             Some(name) if !name.is_empty() => name.clone(),
@@ -54,7 +54,7 @@ impl Target {
             lset.insert(LABEL_PID.into(), pid.to_string());
         }
 
-        Target {
+        EbpfTarget {
             labels: Labels::from_map(lset),
             service_name,
             fingerprint: 0,
@@ -103,7 +103,7 @@ fn infer_service_name(target: DiscoveryTarget) -> String {
     "unspecified".to_string()
 }
 
-
+#[derive(Debug)]
 pub struct TargetsOptions {
     pub targets: Vec<DiscoveryTarget>,
     pub targets_only: bool,
@@ -111,12 +111,11 @@ pub struct TargetsOptions {
 }
 
 pub struct TargetFinder {
-    cid2target: HashMap<String, Target>,
-    pid2target: HashMap<u32, Target>,
+    cid2target: HashMap<String, EbpfTarget>,
+    pid2target: HashMap<u32, EbpfTarget>,
     container_id_cache: Mutex<LruCache<u32, String>>,
-    default_target: Option<Target>,
-    fs: File,
-    sync: Mutex<()>
+    default_target: Option<EbpfTarget>,
+    fs: File
 }
 
 impl TargetFinder {
@@ -128,19 +127,21 @@ impl TargetFinder {
                 LruCache::new(NonZeroUsize::try_from(container_cache_size).unwrap())
             ),
             default_target: None,
-            fs,
-            sync: Mutex::new(())
+            fs
         }
     }
 
-    pub(crate) fn find_target(&self, pid: &u32) -> Option<Target> {
+    pub(crate) fn find_target(&self, pid: &u32) -> Option<EbpfTarget> {
+        info!("find target {}", pid);
         if let Some(target) = self.pid2target.get(pid) {
+            dbg!(&pid);
             return Some(target.clone());
         }
         let cid = {
             let mut cache = self.container_id_cache.lock().unwrap();
             cache.get(pid).cloned()
         };
+        dbg!(&cid);
         match cid {
             Some(cid) => self.cid2target.get(&cid).cloned(),
             None => self.default_target.clone(),
@@ -159,16 +160,20 @@ impl TargetFinder {
     }
 
     fn set_targets(&mut self, opts: &TargetsOptions) {
+        debug!("targets opts {:?}", opts);
         debug!("set targets count {}", opts.targets.len());
         let mut container_id2_target = HashMap::new();
         let mut pid2_target = HashMap::new();
 
         for target in &opts.targets {
+            info!("{}", target["__address__"]);
             if let Some(pid) = pid_from_target(target) {
-                let t = Target::new("".to_string(), pid.clone(), target.clone());
+                dbg!(&pid);
+                let t = EbpfTarget::new("".to_string(), pid.clone(), target.clone());
                 pid2_target.insert(pid, t);
             } else if let Some(cid) = container_id_from_target(target) {
-                let t = Target::new(cid.clone(), 0, target.clone());
+                dbg!(&cid);
+                let t = EbpfTarget::new(cid.clone(), 0, target.clone());
                 container_id2_target.insert(cid, t);
             }
         }
@@ -198,7 +203,7 @@ impl TargetFinder {
             .collect()
     }
 
-    fn targets(&self) -> Vec<Target> {
+    fn targets(&self) -> Vec<EbpfTarget> {
         self.cid2target.values().cloned().collect()
     }
 }

@@ -78,7 +78,7 @@ impl ElfTable {
         };
 
         if !self.find_base(&me) {
-            self.err = Some(NotFound("".to_string()));
+            self.err = Some(NotFound("elf base not found".to_string()));
             return;
         }
 

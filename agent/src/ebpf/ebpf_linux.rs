@@ -3,21 +3,22 @@ use std::{
     time::Duration,
 };
 
-use std::collections::HashMap;
+
 use std::fs::File;
 use std::sync::Mutex;
 use std::borrow::Borrow;
+use std::env::args;
 
-use log::error;
+use log::{error,info};
 use tokio::time::interval;
 use common::common::collector;
 use common::ebpf::metrics::ebpf_metrics::EbpfMetrics;
 use common::ebpf::metrics::metrics::ProfileMetrics;
 
-use common::ebpf::pprof;
+use common::ebpf::{pprof, sd};
 use common::ebpf::pprof::BuildersOptions;
-use common::ebpf::sd::target::{LABEL_SERVICE_NAME, Target, TargetFinder, TargetsOptions};
-use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
+use common::ebpf::sd::target::{LABEL_SERVICE_NAME, EbpfTarget, TargetFinder, TargetsOptions};
+use common::ebpf::session::{DiscoveryTarget, Session, SessionDebugInfo, SessionOptions};
 use common::ebpf::symtab::elf_module::SymbolOptions;
 use common::ebpf::symtab::gcache::{GCacheOptions};
 use common::ebpf::symtab::symbols::CacheOptions;
@@ -28,6 +29,7 @@ use common::error::Result;
 use crate::appender::{Appendable, Fanout};
 use crate::common::component::Component;
 use crate::common::registry::Options;
+use crate::discover::discover::Target;
 use crate::write::write::FanOutClient;
 pub mod push_api {
     include!("../api/push/push.v1.rs");
@@ -76,15 +78,23 @@ impl Default for DebugInfo {
 
 impl Component for EbpfLinuxComponent<'_> {
     async fn run(&mut self) {
+        let opts = TargetsOptions {
+            targets: self.args.targets.clone(),
+            targets_only: true,
+            container_cache_size: 1024,
+        };
+        self.session.start().unwrap();
+        self.session.update_targets(opts);
+
         let mut interval = interval(self.args.collect_interval);
         loop {
             tokio::select! {
-                  _ = interval.tick() => {
-                      let result = self.collect_profiles();
-                        if let Err(err) = result {
-                          dbg!(format!("ebpf profiling session failed: {}", err));
-                        }
-                        self.update_debug_info();
+                _ = interval.tick() => {
+                    let result = self.collect_profiles();
+                    if let Err(err) = result {
+                        dbg!(format!("ebpf profiling session failed: {}", err));
+                    }
+                    self.update_debug_info();
                 }
             }
         }
@@ -193,13 +203,5 @@ fn convert_session_options(_args: &Arguments, ms: Arc<ProfileMetrics>) -> Sessio
         },
         unknown_symbol_address: false,
         metrics: ms,
-    }
-}
-
-fn targets_option_from_args(args: &Arguments) -> TargetsOptions {
-    TargetsOptions {
-        targets: args.clone().targets,
-        targets_only: true,
-        container_cache_size: args.container_id_cache_size as usize,
     }
 }

@@ -25,8 +25,8 @@ use crate::ebpf::cpuonline;
 use crate::ebpf::metrics::metrics::ProfileMetrics;
 
 use crate::ebpf::perf_event::PerfEvent;
-use crate::ebpf::reader::Reader;
-use crate::ebpf::sd::target::{Target, TargetFinder, TargetsOptions};
+use crate::ebpf::reader::{Reader, ReaderOptions};
+use crate::ebpf::sd::target::{EbpfTarget, TargetFinder, TargetsOptions};
 use crate::ebpf::session::profile::profile_bss_types::{pid_config, pid_event, sample_key};
 use crate::ebpf::symtab::elf_cache::ElfCacheDebugInfo;
 use crate::ebpf::symtab::gcache::GCacheDebugInfo;
@@ -63,7 +63,7 @@ enum SampleAggregation {
 
 pub type DiscoveryTarget = HashMap<String, String>;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Pids {
     unknown: HashMap<u32, ()>,
     dead: HashMap<u32, ()>,
@@ -135,8 +135,11 @@ impl Session<'_> {
     pub fn new(target_finder: Arc<Mutex<TargetFinder>>, opts: SessionOptions) -> Result<Self> {
         let sym_cache = Arc::new(Mutex::new(SymbolCache::new(opts.cache_options, &opts.metrics.symtab).unwrap()));
         bump_memlock_rlimit().unwrap();
-        let open_skel = ProfileSkelBuilder::default().open().unwrap();
-        let bpf = open_skel.load().unwrap();
+        let mut builder = ProfileSkelBuilder::default();
+        builder.obj_builder.debug(true);
+        let open_skel = builder.open().unwrap();
+        let mut bpf = open_skel.load().unwrap();
+        // bpf.attach().unwrap();
         
         Ok(Self {
             started: false,
@@ -157,24 +160,30 @@ impl Session<'_> {
         })
     }
 
-    fn start(&mut self) -> Result<()> {
+    pub fn start(&mut self) -> Result<()> {
+        info!("start");
+        bump_memlock_rlimit().expect("Failed to increase rlimit");
+        info!("bump_memlock_rlimit");
 
-        bump_memlock_rlimit().expect(&*"Failed to increase rlimit");
-
-        self.bpf.attach().unwrap();
-        self.bpf.maps().events();
+        info!("events_reader");
         let events_reader = Reader::new(
-            MapHandle::try_clone(self.bpf.maps().events()).unwrap(), 4 * page_size::get()
+            MapHandle::try_clone(self.bpf.maps().events()).unwrap(),
+            4 * page_size::get(),
+            ReaderOptions::default()
         ).unwrap();
+
+        info!("elf.perf_events = attach_perf_events");
         self.perf_events = attach_perf_events(
             self.options.sample_rate,
             &self.bpf.links.do_perf_event.take().unwrap()
         ).unwrap();
 
+        info!("?????????????????//");
         if let Err(err) = self.link_kprobes() {
             self.stop_locked();
             return Err(SessionError(err));
         }
+        info!("kprobe//");
         self.events_reader = Some(Arc::new(Mutex::new(events_reader)));
 
         let (_pid_info_request_tx, pid_info_request_rx) = channel::<u32>();
@@ -195,7 +204,6 @@ impl Session<'_> {
         drop(self.pid_info_requests.take());
         drop(self.dead_pid_events.take());
         drop(self.pid_exec_requests.take());
-
         self.wg.done();
     }
 
@@ -229,7 +237,7 @@ impl Session<'_> {
         });
     }
 
-    fn start_profiling_locked(&mut self, pid: &u32, target: &Target) {
+    fn start_profiling_locked(&mut self, pid: &u32, target: &EbpfTarget) {
         if !self.started {
             return;
         }
@@ -256,7 +264,7 @@ impl Session<'_> {
         }
     }
 
-    fn select_profiling_type(&self, pid: u32, _target: &Target) -> ProcInfoLite {
+    fn select_profiling_type(&self, pid: u32, _target: &EbpfTarget) -> ProcInfoLite {
         if let Ok(exe_path) = fs::read_link(format!("/proc/{}/exe", pid)) {
             if let Ok(comm) = fs::read_to_string(format!("/proc/{}/comm", pid)) {
                 let comm = comm.trim_end_matches('\n').to_string();
@@ -274,7 +282,6 @@ impl Session<'_> {
 
         // Logging error
         eprintln!("Failed to read proc information for pid: {}", pid);
-
         ProcInfoLite { pid, comm: String::new(), typ: ProfilingType::TypeError }
     }
 
@@ -282,6 +289,7 @@ impl Session<'_> {
         loop {
             match self.events_reader.take().unwrap().lock().unwrap().read() {
                 Ok(record) => {
+                    info!("OKOKOKOKOKOK {}",record.raw_sample[0]);
                     if record.lost_samples != 0 {
                         error!(
                             "perf event ring buffer full, dropped samples: {}",
@@ -396,7 +404,7 @@ impl Session<'_> {
 
         let disassociate_ctty = "disassociate_ctty";
         let p = progs.disassociate_ctty();
-        match p.attach_kprobe(false, disassociate_ctty) {
+        match p.attach_kprobe(true, disassociate_ctty) {
             Ok(kp) => self.kprobes.push(kp),
             Err(err) => {
                 return Err(format!("link kprobe {}: {}", disassociate_ctty, err));
@@ -409,16 +417,19 @@ impl Session<'_> {
             sys_execve.as_str(),
             sys_execveat.as_str(),
         ];
-
         for kprobe in hooks {
             let p = progs.exec();
-            match p.attach_kprobe(false, kprobe) {
+            match p.attach_kprobe(true, kprobe) {
                 Ok(kp) => self.kprobes.push(kp),
                 Err(err) => {
                     error!("link kprobe kprobe: {}, err: {}", kprobe, err);
                 }
             }
         }
+
+        info!("kprobes");
+        info!("{:?}",&self.kprobes);
+        dbg!("{:?}",&self.kprobes);
         Ok(())
     }
 
@@ -441,7 +452,7 @@ impl Session<'_> {
                 &bpf_map_batch_opts {
                     sz: mem::size_of::<bpf_map_batch_opts>() as size_t,
                     elem_flags: MapFlags::ANY.bits(),
-                    flags: 0,
+                    flags: MapFlags::ANY.bits(),
                 } as *const bpf_map_batch_opts,
             );
 
@@ -538,10 +549,11 @@ impl Session<'_> {
     }
 
     pub(crate) fn collect_regular_profile<F>(&mut self, cb: F) -> Result<()> where F: Fn(ProfileSample) {
+        info!("collect_regular_profile");
         let mut sb = StackBuilder::new();
         let mut known_stacks: HashMap<u32, bool> = HashMap::new();
         let (keys, values, batch) = self.get_counts_map_values().unwrap();
-
+        info!("{:?}", keys);
         for (i, ck) in keys.iter().enumerate() {
             let value = values[i];
 
@@ -553,6 +565,7 @@ impl Session<'_> {
             }
 
             let target_finder = self.target_finder.lock().unwrap();
+            dbg!(target_finder.find_target(&ck.pid));
             if let Some(labels) = target_finder.find_target(&ck.pid) {
                 if self.pids.dead.contains_key(&ck.pid) {
                     continue;
@@ -572,9 +585,11 @@ impl Session<'_> {
                     sb.reset();
                     sb.append(self.comm(ck.pid));
 
+                    dbg!("{:?}", self.options.collect_user);
                     if self.options.collect_user {
                         self.walk_stack(&mut sb, &u_stack, proc, &mut stats);
                     }
+                    dbg!("{:?}", self.options.collect_kernel);
                     if self.options.collect_kernel {
                         let mut sym_cache = self.sym_cache.lock().unwrap();
                         let a = sym_cache.get_kallsyms().clone();
@@ -620,7 +635,7 @@ impl Session<'_> {
             if end > stack.len() {
                 break;
             }
-            let instruction_pointer_bytes = &stack[i * 8..(i + 1) * 8];
+            let instruction_pointer_bytes = &stack[i*8..(i+1)*8];
             let instruction_pointer = u64::from_le_bytes(instruction_pointer_bytes.try_into().unwrap());
             if instruction_pointer == 0 {
                 break;
@@ -664,7 +679,9 @@ impl Session<'_> {
             .unwrap_or_else(|_| None)
     }
 
-    fn collect_metrics(&self, labels: &Target, stats: &StackResolveStats, sb: &StackBuilder) {
+    fn collect_metrics(&self, labels: &EbpfTarget, stats: &StackResolveStats, sb: &StackBuilder) {
+
+        info!("{}", labels.service_name());
         let m = &self.options.metrics.symtab;
         let service_name = labels.service_name();
 
@@ -701,6 +718,7 @@ impl Session<'_> {
         }
 
         let mut unknown_pids_to_remove = HashSet::new();
+        info!("{:?}", self.pids);
         for pid in self.pids.unknown.keys() {
             let proc_path = format!("/proc/{}", pid);
             if let Err(err) = fs::metadata(&proc_path) {
