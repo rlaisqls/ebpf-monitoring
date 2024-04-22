@@ -17,6 +17,10 @@ impl ProfilingType {
     }
 }
 
+// #define OP_REQUEST_UNKNOWN_PROCESS_INFO 1
+// #define OP_PID_DEAD 2
+// #define OP_REQUEST_EXEC_PROCESS_INFO 3
+
 #[derive(Debug)]
 pub enum PidOp {
     RequestUnknownProcessInfo = 1,
@@ -25,7 +29,7 @@ pub enum PidOp {
 }
 
 impl PidOp {
-    pub fn to_u8(&self) -> u8 {
+    pub fn to_u32(&self) -> u32 {
         return match self {
             PidOp::RequestUnknownProcessInfo => { 1 }
             PidOp::Dead => { 2 }

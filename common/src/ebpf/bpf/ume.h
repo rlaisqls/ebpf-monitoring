@@ -4,7 +4,7 @@
 
 #if defined(IWM_UME)
 
-#define pyro_bpf_core_read(dst, sz, src)					    \
+#define iwm_bpf_core_read(dst, sz, src)					    \
 		bpf_probe_read_kernel(dst, sz, src)
 
 
@@ -12,7 +12,7 @@
 
 #include "bpf_core_read.h"
 
-#define pyro_bpf_core_read(dst, sz, src)					    \
+#define iwm_bpf_core_read(dst, sz, src)					    \
 	bpf_core_read(dst, sz, src)
 
 

@@ -8,7 +8,7 @@ use lru::LruCache;
 use log::{debug, warn, info};
 
 use crate::common::labels::Labels;
-use crate::ebpf::sd::container_id::container_id_from_target;
+use crate::ebpf::sd::container_id::{container_id_from_target, get_container_id_from_pid};
 use crate::ebpf::session::DiscoveryTarget;
 
 pub const LABEL_CONTAINER_ID: &str = "__container_id__";
@@ -134,18 +134,19 @@ impl TargetFinder {
     pub(crate) fn find_target(&self, pid: &u32) -> Option<EbpfTarget> {
         info!("find target {}", pid);
         if let Some(target) = self.pid2target.get(pid) {
-            dbg!(&pid);
             return Some(target.clone());
         }
-        let cid = {
-            let mut cache = self.container_id_cache.lock().unwrap();
-            cache.get(pid).cloned()
-        };
-        dbg!(&cid);
-        match cid {
-            Some(cid) => self.cid2target.get(&cid).cloned(),
-            None => self.default_target.clone(),
+
+        let mut cache = self.container_id_cache.lock().unwrap();
+        if let Some(cid) = cache.get(pid).cloned() {
+            return self.cid2target.get(&cid).cloned()
         }
+
+        if let Some(cid) = get_container_id_from_pid(pid) {
+            cache.put(pid.clone(), cid.clone());
+            return self.cid2target.get(&cid).cloned();
+        }
+        return None;
     }
 
     pub(crate) fn remove_dead_pid(&mut self, pid: &u32) {
@@ -154,8 +155,9 @@ impl TargetFinder {
         cache.pop(pid);
     }
 
-    pub(crate) fn update(&mut self, args: TargetsOptions) {
-        self.set_targets(&args);
+    pub(crate) fn update(&mut self, args: &TargetsOptions) {
+        info!("target update");
+        self.set_targets(args);
         self.resize_container_id_cache(args.container_cache_size);
     }
 
@@ -168,12 +170,11 @@ impl TargetFinder {
         for target in &opts.targets {
             info!("{}", target["__address__"]);
             if let Some(pid) = pid_from_target(target) {
-                dbg!(&pid);
                 let t = EbpfTarget::new("".to_string(), pid.clone(), target.clone());
                 pid2_target.insert(pid, t);
             } else if let Some(cid) = container_id_from_target(target) {
-                dbg!(&cid);
                 let t = EbpfTarget::new(cid.clone(), 0, target.clone());
+                dbg!(&t);
                 container_id2_target.insert(cid, t);
             }
         }

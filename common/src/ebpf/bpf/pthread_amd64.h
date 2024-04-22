@@ -18,7 +18,7 @@
 static int pthread_getspecific_musl(const struct libc *libc, int32_t key, void **out, const void *tls_base);
 static int pthread_getspecific_glibc(const struct libc *libc, int32_t key, void **out, const void *tls_base);
 
-static __always_inline int pyro_pthread_getspecific(struct libc *libc, int32_t key, void **out) {
+static __always_inline int iwm_pthread_getspecific(struct libc *libc, int32_t key, void **out) {
     if (key == -1) {
         return -1;
     }
@@ -29,7 +29,7 @@ static __always_inline int pyro_pthread_getspecific(struct libc *libc, int32_t k
     void *tls_base = NULL;
 
 
-    if (pyro_bpf_core_read(&tls_base, sizeof(tls_base), &task->thread.fsbase)) {
+    if (iwm_bpf_core_read(&tls_base, sizeof(tls_base), &task->thread.fsbase)) {
         return -1;
     }
 

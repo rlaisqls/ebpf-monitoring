@@ -30,6 +30,10 @@ pub enum Error {
     MapError(String),
     #[error("Write Error: {0}")]
     WriteError(String),
+    #[error("Syscall Error: {0}")]
+    SyscallError(String),
+    #[error("PerfBuffer Error: {0}")]
+    PerfBufferError(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
