@@ -1,9 +1,9 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use crate::ebpf::pprof::ProfileBuilders;
 use crate::ebpf::sd::target::EbpfTarget;
 use crate::ebpf::session::Session;
 use crate::error::Result;
-use log::{debug, error, info};
+
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SampleType {
@@ -29,7 +29,7 @@ pub trait SamplesCollector {
         where F: Fn(ProfileSample);
 }
 
-pub fn collect<S>(builders: Arc<Mutex<ProfileBuilders>>, collector: &mut S) -> Result<()> where S: SamplesCollector {
+pub fn collect<S>(builders: Arc<Mutex<ProfileBuilders>>, collector: &mut MutexGuard<S>) -> Result<()> where S: SamplesCollector {
     collector.collect_profiles(|sample: ProfileSample| {
         if let Ok(mut b) = builders.lock() {
             b.add_sample(sample);

@@ -1,27 +1,30 @@
+#[allow(unused_imports)]
 use std::{
     sync::Arc,
     time::Duration,
 };
 
-
 use std::fs::File;
 use std::sync::Mutex;
 use std::borrow::Borrow;
-use std::env::args;
+use std::ops::Deref;
+use std::thread;
 
-use log::{error,info};
+use log::{error, info};
 use tokio::time::interval;
 use common::common::collector;
 use common::ebpf::metrics::ebpf_metrics::EbpfMetrics;
 use common::ebpf::metrics::metrics::ProfileMetrics;
 
-use common::ebpf::{pprof, sd};
+use common::ebpf::{pprof};
 use common::ebpf::pprof::BuildersOptions;
-use common::ebpf::sd::target::{LABEL_SERVICE_NAME, EbpfTarget, TargetFinder, TargetsOptions};
-use common::ebpf::session::{DiscoveryTarget, Session, SessionDebugInfo, SessionOptions};
+use common::ebpf::ring::reader::Reader;
+use common::ebpf::sd::target::{LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
+use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
 use common::ebpf::symtab::elf_module::SymbolOptions;
 use common::ebpf::symtab::gcache::{GCacheOptions};
 use common::ebpf::symtab::symbols::CacheOptions;
+use common::ebpf::sync::PidOp;
 use common::error::Error::OSError;
 
 use common::error::Result;
@@ -54,7 +57,7 @@ pub struct Arguments {
 pub struct EbpfLinuxComponent<'a> {
     options: Options,
     args: Arguments,
-    session: Session<'a>,
+    pub session: Arc<Mutex<Session<'a>>>,
 
     appendable: Box<Fanout>,
     debug_info: DebugInfo,
@@ -83,8 +86,10 @@ impl Component for EbpfLinuxComponent<'_> {
             targets_only: true,
             container_cache_size: 1024,
         };
-        self.session.start().unwrap();
-        self.session.update_targets(opts);
+        {
+            let mut s = self.session.lock().unwrap();
+            s.update_targets(&opts);
+        }
 
         let mut interval = interval(self.args.collect_interval);
         loop {
@@ -119,7 +124,7 @@ impl EbpfLinuxComponent<'_> {
         Ok(Self {
             options: opts.clone(),
             args: args.clone(),
-            session,
+            session: Arc::new(Mutex::new(session)),
             appendable: Box::new(Fanout::new(args.clone().forward_to, opts.id, opts.registerer.clone())),
             debug_info: DebugInfo { targets: vec![], session: SessionDebugInfo::default() },
             metrics: ms.clone()
@@ -130,7 +135,10 @@ impl EbpfLinuxComponent<'_> {
         let builders = Arc::new(Mutex::new(pprof::ProfileBuilders::new(
             BuildersOptions { sample_rate: 1000, per_pid_profile: false }
         )));
-        collector::collect(builders.clone(), &mut self.session).unwrap();
+        {
+            let mut s = self.session.lock().unwrap();
+            collector::collect(builders.clone(), &mut s).unwrap();
+        }
 
         let bb = builders.clone();
         let b = bb.lock().unwrap();
@@ -166,13 +174,14 @@ impl EbpfLinuxComponent<'_> {
     }
 
     fn update_debug_info(&mut self) {
+        let mut s = self.session.lock().unwrap();
         let targets = {
-            let mut target_finder = self.session.target_finder.lock().unwrap() ;
+            let mut target_finder = s.target_finder.lock().unwrap() ;
             target_finder.debug_info().clone()
         };
         let debug_info = DebugInfo {
             targets,
-            session: self.session.debug_info().unwrap(),
+            session: s.debug_info().unwrap(),
         };
         self.debug_info = debug_info;
     }

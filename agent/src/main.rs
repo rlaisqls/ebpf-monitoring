@@ -1,8 +1,10 @@
 use std::any::Any;
 use std::collections::HashMap;
-use std::panic;
+use std::{panic, thread};
+use std::ops::Deref;
+use std::panic::PanicInfo;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use log::{error, info};
 use prometheus::Registry;
@@ -20,6 +22,8 @@ use agent::ebpf::ebpf_linux;
 use agent::ebpf::ebpf_linux::{EbpfLinuxComponent};
 use agent::write::write;
 use agent::write::write::WriteComponent;
+use common::ebpf::ring::reader::Reader;
+use common::ebpf::sync::PidOp;
 
 fn my_get_service_data(_name: &str) -> Result<Box<dyn Any>, String> {
     // Implement your logic here
@@ -27,14 +31,22 @@ fn my_get_service_data(_name: &str) -> Result<Box<dyn Any>, String> {
     Ok(Box::new(0))
 }
 
+#[derive(Debug, Default, Copy, Clone)]
+#[repr(C)]
+pub struct pid_event {
+    pub op: u32,
+    pub pid: u32,
+}
+
 #[tokio::main]
+#[allow(dead_code)]
 #[allow(unused_variables)]
+#[allow(async_fn_in_trait)]
 async fn main() -> Result<(), ()> {
-    // env_logger::init();
     let stdout = ConsoleAppender::builder().build();
     let config = Config::builder()
         .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .build(Root::builder().appender("stdout").build(LevelFilter::Trace))
+        .build(Root::builder().appender("stdout").build(LevelFilter::Debug))
         .unwrap();
     let _handle = log4rs::init_config(config).unwrap();
 
@@ -94,7 +106,77 @@ async fn main() -> Result<(), ()> {
 
     info!("Server started");
     write_component.run().await;
+
+    let mut events_reader = {
+        let mut s = ebpf_component.session.lock().unwrap();
+        s.start().unwrap();
+        Arc::new(Mutex::new(Reader::new(
+            s.bpf.maps().events().deref()
+        ).unwrap()))
+    };
+    let mut s = ebpf_component.session.clone();
+    thread::spawn(move || {
+        loop {
+            let mut er = events_reader.lock().unwrap();
+            match er.read_events() {
+                Ok(record) => {
+                    if record.lost_samples != 0 {
+                        error!(
+                                "perf event ring buffer full, dropped samples: {}",
+                                record.lost_samples
+                            );
+                    }
+
+                    for rs in record.raw_samples.iter() {
+                        let raw_sample = rs.to_vec();
+                        if raw_sample.len() < 8 {
+                            error!("perf event record too small: {}", raw_sample.len());
+                            continue;
+                        }
+
+                        let e = pid_event {
+                            op: u32::from_le_bytes([raw_sample[0], raw_sample[1], raw_sample[2], raw_sample[3]]),
+                            pid: u32::from_le_bytes([raw_sample[4], raw_sample[5], raw_sample[6], raw_sample[7]])
+                        };
+
+                        if e.op == PidOp::RequestUnknownProcessInfo.to_u32() {
+                            let mut ss = s.lock().unwrap();
+                            match ss.process_pid_info_requests(e.pid) {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    error!("pid info request queue full, dropping request: {}", e.pid);
+                                }
+                            }
+                        } else if e.op == PidOp::Dead.to_u32() {
+                            let mut ss = s.lock().unwrap();
+                            match ss.process_dead_pids_events(e.pid) {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    error!("dead pid info queue full, dropping event: {}", e.pid);
+                                }
+                            }
+                        } else if e.op == PidOp::RequestExecProcessInfo.to_u32() {
+                            let mut ss = s.lock().unwrap();
+                            match ss.process_pid_exec_requests(e.pid) {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    error!("pid exec request queue full, dropping event: {}", e.pid);
+                                }
+                            }
+                        } else {
+                            error!("unknown perf event record: op={}, pid={}", e.op, e.pid);
+                        }
+                    }
+                }
+                Err(err) => {
+                    error!("reading from perf event reader: {}", err);
+                }
+            }
+        }
+    });
+
     ebpf_component.run().await;
+
     info!("Server stopped");
     Ok(())
 }

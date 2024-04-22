@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{HashMap};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
@@ -105,34 +105,5 @@ impl FromStr for Labels {
             labels.push(Label::new(name.to_string(), value.to_string()));
         }
         Ok(Labels::new(labels))
-    }
-}
-
-#[derive(Debug, Clone)]
-struct LabelsMap(BTreeMap<String, String>);
-
-impl LabelsMap {
-    fn new() -> Self {
-        Self(BTreeMap::new())
-    }
-
-    fn insert(&mut self, name: &str, value: &str) {
-        self.0.insert(name.to_string(), value.to_string());
-    }
-
-    fn get(&self, name: &str) -> Option<&String> {
-        self.0.get(name)
-    }
-
-    fn remove(&mut self, name: &str) -> Option<String> {
-        self.0.remove(name)
-    }
-
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 }

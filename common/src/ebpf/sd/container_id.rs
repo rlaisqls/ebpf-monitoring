@@ -1,3 +1,7 @@
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+use log::info;
 use crate::ebpf::sd::target::{LABEL_CONTAINER_ID};
 use crate::ebpf::session::DiscoveryTarget;
 
@@ -51,3 +55,23 @@ pub fn get_container_id_from_cgroup(line: &str) -> Option<String> {
     }
     None
 }
+
+pub fn get_container_id_from_pid(pid: &u32) -> Option<String> {
+    let path = format!("/proc/{}/cgroup", pid);
+    let file = match File::open(Path::new(&path)) {
+        Ok(file) => file,
+        Err(_) => return None,
+    };
+
+    let reader = BufReader::new(file);
+    let l = reader.lines();
+    for line in l {
+        if let Ok(line) = line {
+            if let Some(cid) = get_container_id_from_cgroup(&line) {
+                return Some(cid);
+            }
+        }
+    }
+    None
+}
+

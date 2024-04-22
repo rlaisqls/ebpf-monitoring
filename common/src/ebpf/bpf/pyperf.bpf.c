@@ -151,7 +151,7 @@ struct {
 static __always_inline int get_thread_state(
         py_pid_data *pid_data,
         void **out_thread_state) {
-    return pyro_pthread_getspecific(&pid_data->libc, pid_data->tssKey, out_thread_state);
+    return iwm_pthread_getspecific(&pid_data->libc, pid_data->tssKey, out_thread_state);
 }
 
 static __always_inline int submit_sample(

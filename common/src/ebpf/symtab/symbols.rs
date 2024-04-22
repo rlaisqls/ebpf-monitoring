@@ -70,8 +70,7 @@ impl SymbolCache {
             pid as i32,
             ElfTableOptions {
                 elf_cache: self.elf_cache.clone(),
-                metrics: self.metrics.clone(),
-                symbol_options: self.options.symbol_options,
+                metrics: self.metrics.clone()
             },
         )));
         self.pid_cache.cache(pid, fresh.clone());

@@ -1,3 +1,20 @@
+#if defined(__TARGET_ARCH_x86)
+#define SYSCALL_WRAPPER 1
+#define SYS_PREFIX "__x64_"
+#elif defined(__TARGET_ARCH_s390)
+#define SYSCALL_WRAPPER 1
+#define SYS_PREFIX "__s390x_"
+#elif defined(__TARGET_ARCH_arm64)
+#define SYSCALL_WRAPPER 1
+#define SYS_PREFIX "__arm64_"
+#elif defined(__TARGET_ARCH_riscv)
+#define SYSCALL_WRAPPER 1
+#define SYS_PREFIX "__riscv_"
+#else
+#define SYSCALL_WRAPPER 0
+#define SYS_PREFIX "__se_"
+#endif
+
 #ifndef PROFILE_BPF_H
 #define PROFILE_BPF_H
 
@@ -32,18 +49,12 @@ struct pid_event {
 };
 struct pid_event e__;
 
-
-
-
-
-
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, u32);
     __type(value, struct pid_config);
     __uint(max_entries, 1024);
 } pids SEC(".maps");
-
 
 struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);

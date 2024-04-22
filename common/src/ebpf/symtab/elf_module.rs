@@ -23,8 +23,7 @@ use crate::error::Result;
 #[derive(Clone)]
 pub struct ElfTableOptions {
     pub(crate) elf_cache: Arc<ElfCache>,
-    pub(crate) metrics: Arc<SymtabMetrics>,
-    pub(crate) symbol_options: SymbolOptions,
+    pub(crate) metrics: Arc<SymtabMetrics>
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -40,7 +39,7 @@ impl Default for SymbolOptions {
 
 pub struct ElfTable {
     fs: String,
-    pub(crate) table: Arc<Mutex<dyn SymbolNameResolver>>,
+    pub(crate) table: Arc<Mutex<dyn SymbolNameResolver + Send>>,
     pub(crate) base: u64,
     loaded: bool,
     loaded_cached: bool,

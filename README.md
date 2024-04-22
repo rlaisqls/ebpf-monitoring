@@ -34,3 +34,6 @@
 - https://pyroscope.io/blog/ebpf-profiling-pros-cons/
 - https://fedepaol.github.io/blog/2023/09/24/ebpf-journey-by-examples-perf-events-with-pyroscope/pyroscope/latestonfigure-client/grafana-agent/ebpf/troubleshooting/
 - https://nakryiko.com/posts/libbpf-bootstrap/
+
+JIT 관련
+- https://www.brendangregg.com/blog/2014-09-17/node-flame-graphs-on-linux.html

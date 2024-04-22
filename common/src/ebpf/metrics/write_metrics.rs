@@ -15,27 +15,27 @@ impl WriteMetrics {
 
         let sent_bytes = reg.register_counter_vec(
             "iwm_write_sent_bytes_total",
-            "Total number of compressed bytes sent to Pyroscope.",
+            "Total number of compressed bytes sent to IWM.",
             &["endpoint"],
         );
         let dropped_bytes = reg.register_counter_vec(
             "iwm_write_dropped_bytes_total",
-            "Total number of compressed bytes dropped by Pyroscope.",
+            "Total number of compressed bytes dropped by IWM.",
             &["endpoint"],
         );
         let sent_profiles = reg.register_counter_vec(
             "iwm_write_sent_profiles_total",
-            "Total number of profiles sent to Pyroscope.",
+            "Total number of profiles sent to IWM.",
             &["endpoint"],
         );
         let dropped_profiles = reg.register_counter_vec(
             "iwm_write_dropped_profiles_total",
-            "Total number of profiles dropped by Pyroscope.",
+            "Total number of profiles dropped by IWM.",
             &["endpoint"],
         );
         let retries = reg.register_counter_vec(
             "iwm_write_retries_total",
-            "Total number of retries to Pyroscope.",
+            "Total number of retries to IWM.",
             &["endpoint"],
         );
 

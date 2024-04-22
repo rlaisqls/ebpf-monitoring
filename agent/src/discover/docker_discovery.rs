@@ -6,7 +6,7 @@ use std::{
 use docker_api::Docker;
 use docker_api::opts::ContainerListOpts;
 
-use log::{info, error};
+use log::{info};
 use regex::Regex;
 
 
