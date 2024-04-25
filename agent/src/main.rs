@@ -22,8 +22,8 @@ use agent::ebpf::ebpf_linux;
 use agent::ebpf::ebpf_linux::{EbpfLinuxComponent};
 use agent::write::write;
 use agent::write::write::WriteComponent;
-use common::ebpf::ring::reader::Reader;
-use common::ebpf::sync::PidOp;
+use iwm::ebpf::ring::reader::Reader;
+use iwm::ebpf::sync::PidOp;
 
 fn my_get_service_data(_name: &str) -> Result<Box<dyn Any>, String> {
     // Implement your logic here
@@ -72,7 +72,7 @@ async fn main() -> Result<(), ()> {
     let write_args = write::Arguments {
         external_labels: HashMap::new(),
         endpoints: Vec::from([write::EndpointOptions {
-            url: "http://pyroscope:4100".to_string(),
+            url: "http://localhost:4040".to_string(),
             remote_timeout: Duration::from_secs(10),
             min_backoff: Duration::from_millis(500),
             max_backoff: Duration::from_secs(300),

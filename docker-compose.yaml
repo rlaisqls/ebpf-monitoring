@@ -4,5 +4,3 @@ services:
     image: grafana/pyroscope
     ports:
       - '4040:4040'
-  pyroscope-tmp:
-    image: grafana/pyroscope

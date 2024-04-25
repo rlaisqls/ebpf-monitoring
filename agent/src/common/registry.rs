@@ -2,10 +2,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use common::error::Result;
+use iwm::error::Result;
 use regex::Regex;
-use common::ebpf::metrics::registry::Registerer;
-use common::error::Error::OSError;
+use iwm::ebpf::metrics::registry::Registerer;
+use iwm::error::Error::OSError;
 
 type ParsedName = Vec<String>;
 

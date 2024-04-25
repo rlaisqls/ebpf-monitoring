@@ -3,9 +3,9 @@ use std::time::Instant;
 
 use prometheus::Histogram;
 
-use common::common::labels::Labels;
-use common::ebpf::metrics::registry::Registerer;
-use common::error::Result;
+use iwm::common::labels::Labels;
+use iwm::ebpf::metrics::registry::Registerer;
+use iwm::error::Result;
 use crate::ebpf::ebpf_linux::push_api;
 use crate::ebpf::ebpf_linux::push_api::RawSample;
 use crate::write::write::FanOutClient;

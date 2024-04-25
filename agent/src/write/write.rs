@@ -4,22 +4,15 @@ use std::collections::HashMap;
 use std::sync::{Arc};
 use std::time::Duration;
 use std::borrow::Borrow;
-
-
-
-
-
-
-
-
+use log::{info, warn};
 
 
 use tonic::transport::Channel;
-use common::common::labels::Labels;
-use common::ebpf::metrics::write_metrics::WriteMetrics;
-use common::ebpf::sd::target::{METRIC_NAME, RESERVED_LABEL_PREFIX};
+use iwm::common::labels::Labels;
+use iwm::ebpf::metrics::write_metrics::WriteMetrics;
+use iwm::ebpf::sd::target::{METRIC_NAME, RESERVED_LABEL_PREFIX};
 
-use common::error::Result;
+use iwm::error::Result;
 
 use crate::common::registry::{Options};
 use crate::common::component::Component;
@@ -110,8 +103,6 @@ pub const DELTA_LABEL: &str = "__delta__";
 impl Appender for FanOutClient {
     fn append(&self, lbs: Labels, samples: Vec<RawSample>) -> Result<()> {
         // todo: pool label pair arrays and label builder to avoid allocations
-        let mut proto_labels: Vec<LabelPair> = Vec::with_capacity(lbs.len() + self.config.external_labels.len());
-        let mut proto_samples: Vec<RawSample> = Vec::with_capacity(samples.len());
         let mut lbs_builder = HashMap::<String, String>::new();
 
         for label in lbs.0 {
@@ -129,34 +120,30 @@ impl Appender for FanOutClient {
             lbs_builder.insert(name.clone(), value.clone());
         }
 
-        for key in lbs_builder.keys(){
-            proto_labels.push(LabelPair {
+        let labels = lbs_builder.keys().map(|key| {
+            LabelPair {
                 name: key.clone(),
                 value: lbs_builder.get(key).unwrap().clone(),
-            });
-        }
+            }
+        }).collect();
 
-        for sample in samples {
-            proto_samples.push(RawSample {
-                raw_profile: sample.raw_profile,
-                id: "".to_string(),
-            });
-        }
+
+        let samples = samples.iter().map(|sample| {
+            dbg!(sample.raw_profile.len());
+            RawSample {
+                raw_profile: sample.raw_profile.clone(),
+                id: "0".to_string(),
+            }
+        }).collect();
 
         // push to all clients
         // Assuming Push method is defined elsewhere
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                self.push(PushRequest {
-                    series: vec![RawProfileSeries {
-                        labels: proto_labels,
-                        samples: proto_samples,
-                    }],
-                }).await.unwrap();
-            });
+        self.push(PushRequest {
+            series: vec![RawProfileSeries {
+                labels,
+                samples,
+            }],
+        }).unwrap();
 
         Ok(())
     }
@@ -182,9 +169,9 @@ impl FanOutClient {
         })
     }
 
-    async fn push(&self, req: PushRequest) -> Result<PushResponse> {
-        //let mut errors = Vec::new();
+    fn push(&self, req: PushRequest) -> Result<PushResponse> {
 
+        //info!("{:?}",&req);
         self.clients.iter().enumerate().for_each(|(i, client)| {
             let r = req.clone();
             let mut client = client.clone();
@@ -192,23 +179,16 @@ impl FanOutClient {
             let metrics = self.metrics.clone();
 
             tokio::spawn(async move {
-                loop {
-                    let (req_size, profile_count) = request_size(&r);
-
-                    let result = PusherServiceClient::push(&mut client, r.clone()).await;
-                    // let result = tokio::time::timeout(
-                    //     Duration::from_secs(10), c.push(r.clone())
-                    // ).await.unwrap();
-
-                    if result.is_ok() {
-                        metrics.sent_bytes.with_label_values(&[&config.url]).inc_by(req_size as f64);
-                        metrics.sent_profiles.with_label_values(&[&config.url]).inc_by(profile_count as f64);
-                        break;
-                    } else if let Err(err) = result {
-                        log::warn!("failed to push to endpoint: {:?}", err);
-                        //errors.push(err.clone());
-                        metrics.retries.with_label_values(&[&config.url]).inc();
-                    }
+                let (req_size, profile_count) = request_size(&r);
+                let result = PusherServiceClient::push(&mut client, r.clone()).await;
+                if result.is_ok() {
+                    metrics.sent_bytes.with_label_values(&[&config.url]).inc_by(req_size as f64);
+                    metrics.sent_profiles.with_label_values(&[&config.url]).inc_by(profile_count as f64);
+                } else if let Err(err) = result {
+                    info!("{}", &config.url);
+                    warn!("failed to push to endpoint: {:?}", err);
+                    //errors.push(err.clone());
+                    metrics.retries.with_label_values(&[&config.url]).inc();
                 }
             });
             ()

@@ -12,22 +12,22 @@ use std::thread;
 
 use log::{error, info};
 use tokio::time::interval;
-use common::common::collector;
-use common::ebpf::metrics::ebpf_metrics::EbpfMetrics;
-use common::ebpf::metrics::metrics::ProfileMetrics;
+use iwm::common::collector;
+use iwm::ebpf::metrics::ebpf_metrics::EbpfMetrics;
+use iwm::ebpf::metrics::metrics::ProfileMetrics;
 
-use common::ebpf::{pprof};
-use common::ebpf::pprof::BuildersOptions;
-use common::ebpf::ring::reader::Reader;
-use common::ebpf::sd::target::{LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
-use common::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
-use common::ebpf::symtab::elf_module::SymbolOptions;
-use common::ebpf::symtab::gcache::{GCacheOptions};
-use common::ebpf::symtab::symbols::CacheOptions;
-use common::ebpf::sync::PidOp;
-use common::error::Error::OSError;
+use iwm::ebpf::{pprof};
+use iwm::ebpf::pprof::BuildersOptions;
+use iwm::ebpf::ring::reader::Reader;
+use iwm::ebpf::sd::target::{LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
+use iwm::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
+use iwm::ebpf::symtab::elf_module::SymbolOptions;
+use iwm::ebpf::symtab::gcache::{GCacheOptions};
+use iwm::ebpf::symtab::symbols::CacheOptions;
+use iwm::ebpf::sync::PidOp;
+use iwm::error::Error::OSError;
 
-use common::error::Result;
+use iwm::error::Result;
 
 use crate::appender::{Appendable, Fanout};
 use crate::common::component::Component;

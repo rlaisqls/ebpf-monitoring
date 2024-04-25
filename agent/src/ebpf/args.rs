@@ -1,5 +1,5 @@
 use std::time::Duration;
-use common::ebpf::sd::target::EbpfTarget;
+use iwm::ebpf::sd::target::EbpfTarget;
 use crate::appender::Appendable;
 
 pub struct Arguments {
