@@ -146,21 +146,22 @@ impl EbpfLinuxComponent<'_> {
             let sn = builder.labels.get(LABEL_SERVICE_NAME);
             let a = sn.unwrap();
             let service_name = a.trim();
+
             self.metrics.pprofs_total
                 .with_label_values(&[service_name]).inc();
             self.metrics.pprof_samples_total
                 .with_label_values(&[service_name])
-                .inc_by(builder.profile.sample.len() as f64);
+                .inc_by(builder.pprof_builder.profile.sample.len() as f64);
 
             let mut buf = vec![];
             builder.write(&mut buf);
 
             let raw_profile: Vec<u8> = buf.into();
-            self.metrics.pprof_bytes_total
-                .with_label_values(&[service_name])
-                .inc_by(raw_profile.len() as f64);
+            self.metrics.pprof_bytes_total.with_label_values(&[service_name]).inc_by(raw_profile.len() as f64);
 
-            let samples = vec![push_api::RawSample { raw_profile, id: "".to_string() }];
+            let samples = vec![
+                push_api::RawSample { raw_profile, id: "".to_string() }
+            ];
             let appender = self.appendable.appender();
             if let Err(err) = appender.append(
                 builder.labels.clone(),

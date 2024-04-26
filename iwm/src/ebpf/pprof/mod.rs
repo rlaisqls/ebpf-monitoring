@@ -61,6 +61,7 @@ impl ProfileBuilders {
 
         self.builders.entry(k).or_insert_with(|| {
             let mut b = PProfBuilder::default();
+            //b.add_string(&"".to_string());
             let mut from_b = |s: &str| { b.add_string(&s.to_string()) };
             let (sample_type, period_type, period) = {
                 if sample.sample_type == SAMPLE_TYPE_CPU {
@@ -80,31 +81,31 @@ impl ProfileBuilders {
                     )
                 }
             };
+            b.profile = Profile {
+                sample_type,
+                time_nanos: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_nanos() as i64,
+                duration_nanos: period,
+                period_type: Some(period_type),
+                mapping: vec![Mapping{
+                    id: 1,
+                    memory_start: 0,
+                    memory_limit: 0,
+                    file_offset: 0,
+                    filename: 0,
+                    build_id: 0,
+                    has_functions: false,
+                    has_filenames: false,
+                    has_line_numbers: false,
+                    has_inline_frames: false,
+                }],
+                ..Default::default()
+            };
 
             ProfileBuilder {
                 labels: labels.clone(),
-                profile: Profile {
-                    sample_type,
-                    time_nanos: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("Time went backwards")
-                        .as_nanos() as i64,
-                    duration_nanos: period,
-                    period_type: Some(period_type),
-                    mapping: vec![Mapping{
-                        id: 1,
-                        memory_start: 0,
-                        memory_limit: 0,
-                        file_offset: 0,
-                        filename: 0,
-                        build_id: 0,
-                        has_functions: false,
-                        has_filenames: false,
-                        has_line_numbers: false,
-                        has_inline_frames: false,
-                    }],
-                    ..Default::default()
-                },
                 tmp_location_ids: Vec::with_capacity(128),
                 tmp_locations: Vec::with_capacity(128),
                 pprof_builder: b,
@@ -119,7 +120,6 @@ pub struct ProfileBuilder {
     pub locations: HashMap<String, Location>,
     pub functions: HashMap<String, Function>,
     pub sample_hash_to_sample: HashMap<u64, Sample>,
-    pub profile: Profile,
     pub labels: Labels,
 
     pub tmp_locations: Vec<Location>,
@@ -134,22 +134,6 @@ impl Default for ProfileBuilder {
             locations: HashMap::new(),
             functions: HashMap::new(),
             sample_hash_to_sample: HashMap::new(),
-            profile: Profile {
-                sample_type: vec![],
-                sample: vec![],
-                mapping: vec![],
-                location: vec![],
-                function: vec![],
-                string_table: vec![],
-                drop_frames: 0,
-                keep_frames: 0,
-                time_nanos: 0,
-                duration_nanos: 0,
-                period_type: None,
-                period: 0,
-                comment: vec![],
-                default_sample_type: 0,
-            },
             labels: Labels(vec![]),
             tmp_locations: vec![],
             tmp_location_ids: vec![],
@@ -169,7 +153,7 @@ impl ProfileBuilder {
         for s in input_sample.stack {
             sample.location_id.push(self.add_location(s.as_str()).id);
         }
-        self.profile.sample.push(sample);
+        self.pprof_builder.profile.sample.push(sample);
     }
 
     fn create_sample_or_add_value(&mut self, input_sample: &ProfileSample) {
@@ -188,7 +172,7 @@ impl ProfileBuilder {
 
         if let Some(sample) = self.sample_hash_to_sample.get_mut(&h) {
             if input_sample.sample_type == SampleType::Cpu {
-                sample.value[0] += (input_sample.value as i64) * self.profile.period;
+                sample.value[0] += (input_sample.value as i64) * self.pprof_builder.profile.period;
             } else {
                 sample.value[0] += input_sample.value as i64;
                 sample.value[1] += input_sample.value2 as i64;
@@ -198,14 +182,14 @@ impl ProfileBuilder {
 
         let mut sample = self.new_sample(input_sample);
         if input_sample.sample_type == SampleType::Cpu {
-            sample.value[0] += (input_sample.value as i64) * self.profile.period;
+            sample.value[0] += (input_sample.value as i64) * self.pprof_builder.profile.period;
         } else {
             sample.value[0] += input_sample.value as i64;
             sample.value[1] += input_sample.value2 as i64;
         }
         sample.location_id.copy_from_slice(&self.tmp_location_ids);
         self.sample_hash_to_sample.insert(h, sample.clone());
-        self.profile.sample.push(sample);
+        self.pprof_builder.profile.sample.push(sample);
     }
 
     fn new_sample(&self, input_sample: &ProfileSample) -> Sample {
@@ -224,11 +208,11 @@ impl ProfileBuilder {
             return loc.clone();
         }
 
-        let id = (self.profile.location.len() + 1) as u64;
+        let id = (self.pprof_builder.profile.location.len() + 1) as u64;
         //dbg!(&self.profile);
         let loc = Location {
             id,
-            mapping_id: self.profile.mapping[0].clone().id,
+            mapping_id: self.pprof_builder.profile.mapping[0].clone().id,
             line: vec![Line {
                 function_id: self.add_function(function).id,
                 ..Default::default()
@@ -237,7 +221,7 @@ impl ProfileBuilder {
         };
 
         self.locations.insert(function.to_string(), loc.clone());
-        self.profile.location.push(loc.clone());
+        self.pprof_builder.profile.location.push(loc.clone());
 
         loc
     }
@@ -246,7 +230,7 @@ impl ProfileBuilder {
         if let Some(func) = self.functions.get(function) {
             return func.clone();
         }
-        let id = (self.profile.function.len() + 1) as u64;
+        let id = (self.pprof_builder.profile.function.len() + 1) as u64;
 
         let f = function.to_string();
         let n = self.pprof_builder.add_string(&f);
@@ -258,17 +242,16 @@ impl ProfileBuilder {
             start_line: 0
         };
         self.functions.insert(function.to_string(), func.clone());
-        self.profile.function.push(func.clone());
+        self.pprof_builder.profile.function.push(func.clone());
         func
     }
 
     pub fn write(&self, dst: &mut dyn Write) {
+        let data = self.pprof_builder.profile.encode_to_vec();
         let mut gzip_writer = GzEncoder::new(
             dst, Compression::default()
         );
-        let mut content = Vec::new();
-        self.profile.encode(&mut content).unwrap();
-        gzip_writer.write(content.as_slice()).unwrap();
+        gzip_writer.write(data.as_slice()).unwrap();
         gzip_writer.finish().unwrap();
     }
 }

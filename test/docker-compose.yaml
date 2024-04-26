@@ -14,7 +14,7 @@ services:
   ratings:
     image: docker.io/istio/examples-bookinfo-ratings-v1:1.18.0
     ports:
-      - "9080:9080"
+      - "9080:9081"
     labels:
       app: ratings
       service: ratings
@@ -24,7 +24,7 @@ services:
   reviews-v1:
     image: docker.io/istio/examples-bookinfo-reviews-v1:1.18.0
     ports:
-      - "9080:9080"
+      - "9080:9082"
     labels:
       app: reviews
       service: reviews
@@ -35,7 +35,7 @@ services:
   reviews-v2:
     image: docker.io/istio/examples-bookinfo-reviews-v2:1.18.0
     ports:
-      - "9080:9080"
+      - "9080:9083"
     labels:
       app: reviews
       service: reviews
@@ -46,7 +46,7 @@ services:
   reviews-v3:
     image: docker.io/istio/examples-bookinfo-reviews-v3:1.18.0
     ports:
-      - "9080:9080"
+      - "9080:9084"
     labels:
       app: reviews
       service: reviews
@@ -57,7 +57,7 @@ services:
   productpage:
     image: docker.io/istio/examples-bookinfo-productpage-v1:1.18.0
     ports:
-      - "9080:9080"
+      - "9080:9085"
     labels:
       app: productpage
       service: productpage

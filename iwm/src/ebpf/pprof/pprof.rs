@@ -1,12 +1,13 @@
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::ebpf::pprof::profiles::{Function, Line, Location, Profile};
+use crate::ebpf::pprof::profiles::{Function, Line, Location, Mapping, Profile};
 
 
 // Referenced from https://github.com/grafana/pyroscope-rs/blob/a70f3256bab624b25f365dd4afa0bc959ff69f50/src/encode/pprof.rs
 #[derive(Clone)]
 pub struct PProfBuilder {
-    profile: Profile,
+    pub profile: Profile,
     strings: HashMap<String, i64>,
     functions: HashMap<FunctionMirror, u64>,
     locations: HashMap<LocationMirror, u64>,

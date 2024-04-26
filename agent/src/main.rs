@@ -72,7 +72,7 @@ async fn main() -> Result<(), ()> {
     let write_args = write::Arguments {
         external_labels: HashMap::new(),
         endpoints: Vec::from([write::EndpointOptions {
-            url: "http://localhost:4040".to_string(),
+            url: "http://172.16.68.1:4040".to_string(),
             remote_timeout: Duration::from_secs(10),
             min_backoff: Duration::from_millis(500),
             max_backoff: Duration::from_secs(300),

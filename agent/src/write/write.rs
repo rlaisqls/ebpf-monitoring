@@ -115,18 +115,15 @@ impl Appender for FanOutClient {
             }
             lbs_builder.insert(label.name, label.value);
         }
-
         for (name, value) in &self.config.external_labels {
             lbs_builder.insert(name.clone(), value.clone());
         }
-
         let labels = lbs_builder.keys().map(|key| {
             LabelPair {
                 name: key.clone(),
                 value: lbs_builder.get(key).unwrap().clone(),
             }
         }).collect();
-
 
         let samples = samples.iter().map(|sample| {
             dbg!(sample.raw_profile.len());
@@ -137,13 +134,13 @@ impl Appender for FanOutClient {
         }).collect();
 
         // push to all clients
-        // Assuming Push method is defined elsewhere
-        self.push(PushRequest {
+        let req = PushRequest {
             series: vec![RawProfileSeries {
                 labels,
                 samples,
             }],
-        }).unwrap();
+        };
+        self.push(req).unwrap();
 
         Ok(())
     }
@@ -158,7 +155,7 @@ impl Appendable for FanOutClient {
 impl FanOutClient {
     async fn new(opts: Options, config: Arguments, metrics: Arc<WriteMetrics>) -> Result<Self> {
         let mut clients = Vec::with_capacity(config.endpoints.len());
-        let client = PusherServiceClient::connect("http://[::1]:4040").await.unwrap();
+        let client = PusherServiceClient::connect("http://172.16.68.1:4040").await.unwrap();
         clients.push(client);
         // for endpoint in &config.endpoints {
         //     let client = PusherServiceClient::connect(&endpoint).await.unwrap();

@@ -144,7 +144,7 @@ impl MappedElfFile {
 
     fn get_symbols64(&mut self, typ: u32) -> Result<(Vec<SymbolIndex>, u32)> {
         dbg!(typ);
-        let (mut data, section) = self.section_data(typ).unwrap();
+        let (mut data, section) = self.section_data(typ)?;
         if data.len() % sym64::SIZEOF_SYM != 0 {
             return Err(SymbolError("Length of symbol section is not a multiple of Sym64Size".to_string()));
         }
@@ -182,7 +182,7 @@ impl MappedElfFile {
     }
 
     fn get_symbols32(&mut self, typ: u32) -> Result<(Vec<SymbolIndex>, u32)> {
-        let (mut data, section)  = self.section_data(typ).unwrap();
+        let (mut data, section)  = self.section_data(typ)?;
         if data.len() % sym32::SIZEOF_SYM != 0 {
             return Err(SymbolError("Length of symbol section is not a multiple of Sym32Size".to_string()));
         }
@@ -229,8 +229,8 @@ fn get_link_index(typ: u32) -> SectionLinkIndex {
 }
 
 pub(crate) fn new_symbol_table(mut elf_file: MappedElfFile) -> Result<SymbolNameTable> {
-    let (sym, section_sym) = elf_file.get_symbols(SHT_SYMTAB).unwrap();
-    let (dynsym, section_dynsym) = elf_file.get_symbols(SHT_DYNSYM).unwrap();
+    let (sym, section_sym) = elf_file.get_symbols(SHT_SYMTAB)?;
+    let (dynsym, section_dynsym) = elf_file.get_symbols(SHT_DYNSYM)?;
     let total = dynsym.len() + sym.len();
     if total == 0 {
         return Err(SymbolError("No Symbol".to_string()));

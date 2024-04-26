@@ -6,6 +6,7 @@ use std::str::FromStr;
 use std::sync::{Mutex};
 use lru::LruCache;
 use log::{debug, warn, info};
+use sha256::Sha256Digest;
 
 use crate::common::labels::Labels;
 use crate::ebpf::sd::container_id::{container_id_from_target, get_container_id_from_pid};
@@ -53,7 +54,8 @@ impl EbpfTarget {
         if pid != 0 {
             lset.insert(LABEL_PID.into(), pid.to_string());
         }
-
+        lset.insert("__delta__".to_string(), "false".to_string());
+        lset.insert("target".to_string(), "all".to_string());
         EbpfTarget {
             labels: Labels::from_map(lset),
             service_name,
