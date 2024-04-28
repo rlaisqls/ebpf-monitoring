@@ -1,7 +1,7 @@
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 
-    ["push"]
+    ["push", "profile"]
         .iter()
         .for_each(|name| {
             tonic_build::configure()
