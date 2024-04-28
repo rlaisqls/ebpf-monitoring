@@ -143,6 +143,7 @@ impl EbpfLinuxComponent<'_> {
         let bb = builders.clone();
         let b = bb.lock().unwrap();
         for (_, builder) in &b.builders {
+            dbg!(&builder.pprof_builder.profile.string_table);
             let sn = builder.labels.get(LABEL_SERVICE_NAME);
             let a = sn.unwrap();
             let service_name = a.trim();
@@ -154,11 +155,11 @@ impl EbpfLinuxComponent<'_> {
                 .inc_by(builder.pprof_builder.profile.sample.len() as f64);
 
             let mut buf = vec![];
+            info!("{:?}",&builder.pprof_builder.profile.string_table);
             builder.write(&mut buf);
 
             let raw_profile: Vec<u8> = buf.into();
             self.metrics.pprof_bytes_total.with_label_values(&[service_name]).inc_by(raw_profile.len() as f64);
-
             let samples = vec![
                 push_api::RawSample { raw_profile, id: "".to_string() }
             ];

@@ -545,6 +545,7 @@ impl Session<'_> {
         F: Fn(ProfileSample),
     {
         dbg!("collect_regular_profile");
+
         let mut sb = StackBuilder::new();
         let mut known_stacks: HashMap<u32, bool> = HashMap::new();
         let (keys, values, batch) = self.get_counts_map_values().unwrap();

@@ -14,6 +14,6 @@ pyroscope.ebpf "instance" {
 
 pyroscope.write "endpoint" {
   endpoint {
-    url = "http://172.16.68.131:4040/"
+    url = "http://172.16.68.1:4040/"
   }
 }

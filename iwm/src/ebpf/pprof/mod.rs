@@ -1,7 +1,7 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
-use std::io::{Write};
+use std::io::Write;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use flate2::Compression;
@@ -11,7 +11,7 @@ use prost::Message;
 use crate::common::collector::{ProfileSample, SAMPLE_TYPE_CPU, SampleType};
 use crate::common::labels::Labels;
 use crate::ebpf::pprof::pprof::PProfBuilder;
-use crate::ebpf::pprof::profiles::{Function, Line, Location, Mapping, Profile, Sample, ValueType};
+use crate::ebpf::pprof::profiles::{Function, Line, Location, Sample, ValueType};
 
 pub mod profiles;
 pub mod pprof;
@@ -44,7 +44,7 @@ impl ProfileBuilders {
 
     pub(crate) fn add_sample(&mut self, sample: ProfileSample) {
         let bb = self.builder_for_sample(&sample);
-        bb.create_sample(sample);
+        bb.create_sample_or_add_value(&sample);
     }
 
     fn builder_for_sample(&mut self, sample: &ProfileSample) -> &mut ProfileBuilder {
@@ -61,12 +61,11 @@ impl ProfileBuilders {
 
         self.builders.entry(k).or_insert_with(|| {
             let mut b = PProfBuilder::default();
-            //b.add_string(&"".to_string());
             let mut from_b = |s: &str| { b.add_string(&s.to_string()) };
             let (sample_type, period_type, period) = {
                 if sample.sample_type == SAMPLE_TYPE_CPU {
                     (
-                        vec![ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds"), }],
+                        vec![ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds") }],
                         ValueType { r#type: from_b("cpu"), unit: from_b("nanoseconds") },
                         (Duration::from_secs(1).as_nanos() as i64) / self.opt.sample_rate,
                     )
@@ -81,28 +80,13 @@ impl ProfileBuilders {
                     )
                 }
             };
-            b.profile = Profile {
-                sample_type,
-                time_nanos: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("Time went backwards")
-                    .as_nanos() as i64,
-                duration_nanos: period,
-                period_type: Some(period_type),
-                mapping: vec![Mapping{
-                    id: 1,
-                    memory_start: 0,
-                    memory_limit: 0,
-                    file_offset: 0,
-                    filename: 0,
-                    build_id: 0,
-                    has_functions: false,
-                    has_filenames: false,
-                    has_line_numbers: false,
-                    has_inline_frames: false,
-                }],
-                ..Default::default()
-            };
+            b.profile.sample_type = sample_type;
+            b.profile.time_nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_nanos() as i64;
+            b.profile.duration_nanos = period;
+            b.profile.period_type = Some(period_type);
 
             ProfileBuilder {
                 labels: labels.clone(),
@@ -212,7 +196,7 @@ impl ProfileBuilder {
         //dbg!(&self.profile);
         let loc = Location {
             id,
-            mapping_id: self.pprof_builder.profile.mapping[0].clone().id,
+            mapping_id: 0,
             line: vec![Line {
                 function_id: self.add_function(function).id,
                 ..Default::default()
@@ -248,10 +232,6 @@ impl ProfileBuilder {
 
     pub fn write(&self, dst: &mut dyn Write) {
         let data = self.pprof_builder.profile.encode_to_vec();
-        let mut gzip_writer = GzEncoder::new(
-            dst, Compression::default()
-        );
-        gzip_writer.write(data.as_slice()).unwrap();
-        gzip_writer.finish().unwrap();
+        dst.write(data.as_slice()).unwrap();
     }
 }
