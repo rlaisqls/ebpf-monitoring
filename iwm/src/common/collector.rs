@@ -11,6 +11,7 @@ pub enum SampleType {
     Mem = 1,
 }
 
+#[derive(Debug)]
 pub struct ProfileSample<'a> {
     pub target: &'a EbpfTarget,
     pub pid: u32,

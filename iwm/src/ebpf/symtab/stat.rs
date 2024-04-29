@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 
 #[cfg(target_os = "linux")]
-#[derive(Eq, PartialEq, Copy, Clone, Hash)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 pub struct Stat {
     dev: u64,
     inode: u64,

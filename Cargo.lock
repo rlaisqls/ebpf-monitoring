@@ -1414,6 +1414,7 @@ dependencies = [
  "sha256",
  "thiserror",
  "tokio",
+ "tonic-build",
  "tracing",
  "url",
  "xxhash-rust",

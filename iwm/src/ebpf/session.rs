@@ -38,7 +38,7 @@ use crate::ebpf::ring::sys::bpf_map_lookup_and_delete_elem;
 use crate::ebpf::sd::target::{EbpfTarget, TargetFinder, TargetsOptions};
 use crate::ebpf::session::profile::profile_bss_types::{pid_config, pid_event, sample_key};
 use crate::ebpf::symtab::elf_cache::ElfCacheDebugInfo;
-use crate::ebpf::symtab::gcache::GCacheDebugInfo;
+use crate::ebpf::symtab::gcache::{GCacheDebugInfo, Resource};
 use crate::ebpf::symtab::proc::ProcTableDebugInfo;
 use crate::ebpf::symtab::symbols::{CacheOptions, SymbolCache};
 use crate::ebpf::symtab::symtab::SymbolTable;
@@ -561,10 +561,10 @@ impl Session<'_> {
             if let Some(labels) = target_finder.find_target(&ck.pid) {
                 let (mut stats, proc) = {
                     let mut pids = self.pids.lock().unwrap();
-                    // if pids.dead.contains_key(&ck.pid) {
-                    //     debug!("pid {} is dead", &ck.pid);
-                    //     continue;
-                    // }
+                    if pids.dead.contains_key(&ck.pid) {
+                        debug!("pid {} is dead", &ck.pid);
+                        continue;
+                    }
                     let mut stats = StackResolveStats::default();
                     let proc = {
                         let mut sym_cache = self.sym_cache.lock().unwrap();
@@ -575,7 +575,10 @@ impl Session<'_> {
                     };
                     (stats, proc)
                 };
-
+                {
+                    let mut a = proc.lock().unwrap();
+                    a.refresh_resource();
+                }
                 let u_stack = self.get_stack(ck.user_stack);
                 let k_stack = self.get_stack(ck.kern_stack);
                 sb.reset();
@@ -591,12 +594,13 @@ impl Session<'_> {
                     };
                     self.walk_stack(&mut sb, &k_stack.unwrap(), a, &mut stats);
                 }
+                // info!("{:?}", &sb.stack);
                 if sb.stack.len() > 1 {
                     cb(ProfileSample {
                         target: &labels,
                         pid: ck.pid,
                         sample_type: SampleType::Cpu,
-                        aggregation: true,
+                        aggregation: false,
                         stack: sb.stack.clone(),
                         value: value as u64,
                         value2: 0,
@@ -639,14 +643,14 @@ impl Session<'_> {
                 break;
             }
             let instruction_pointer_bytes = &stack[i * 8..(i + 1) * 8];
-            let instruction_pointer =
-                u64::from_le_bytes(instruction_pointer_bytes.try_into().unwrap());
+            let instruction_pointer = u64::from_le_bytes(instruction_pointer_bytes.try_into().unwrap());
             if instruction_pointer == 0 {
                 break;
             }
 
             let mut r = resolver.lock().unwrap();
             let name = if let Some(sym) = r.resolve(instruction_pointer) {
+                //dbg!(&instruction_pointer);
                 let n = if !sym.name.is_empty() {
                     stats.known += 1;
                     sym.name.clone()
@@ -714,7 +718,7 @@ impl Session<'_> {
         let mut pids = self.pids.lock().unwrap();
         let mut dead_pids_to_remove = HashSet::new();
         for pid in pids.dead.keys() {
-            dbg!("cleanup dead pid: {}", pid.to_string());
+            // dbg!("cleanup dead pid: {}", pid.to_string());
             dead_pids_to_remove.insert(*pid);
         }
 
@@ -731,7 +735,6 @@ impl Session<'_> {
         }
 
         let mut unknown_pids_to_remove = HashSet::new();
-        info!("{:?}", self.pids);
         let u = pids.unknown.clone();
         let keys = u.keys();
         for pid in keys {

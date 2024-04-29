@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use log::info;
 use crate::ebpf::symtab::table::{Symbol, SymbolTab};
 use crate::error::Error::SymbolError;
 use crate::error::Result;
@@ -44,7 +45,6 @@ fn new_kallsyms_from_data<B: BufRead>(buf: B) -> Result<SymbolTab> {
         }
 
         let istart = u64::from_str_radix(addr_part, 16).map_err(|e| SymbolError(e.to_string())).unwrap();
-
         if istart < kernel_addr_space {
             continue;
         }

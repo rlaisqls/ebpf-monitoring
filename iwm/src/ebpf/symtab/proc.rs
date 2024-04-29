@@ -42,22 +42,39 @@ pub struct ElfRange {
 }
 
 impl Resource for ProcTable {
-    fn refresh(&mut self) {
+    fn refresh_resource(&mut self) {
         self.refresh()
     }
 
-    fn cleanup(&mut self) {
+    fn cleanup_resource(&mut self) {
         self.cleanup()
     }
 }
 
 impl SymbolTable for ProcTable {
     fn refresh(&mut self) {
-        self.refresh()
+        if self.err.is_some() {
+            return;
+        }
+        let path = format!("/proc/{}/maps", self.pid.to_string());
+        match fs::read_to_string(&path) {
+            Ok(proc_maps) => match self.refresh_proc_map(proc_maps) {
+                Err(e) => {
+                    self.err = Some(e);
+                }
+                _ => {}
+            },
+            Err(e) => {
+                self.err = Some(ProcError(e.to_string()));
+            }
+        }
     }
 
     fn cleanup(&mut self) {
-        self.cleanup()
+        self.file_to_table.iter_mut().for_each(|(_, table)| {
+            let mut t = table.lock().unwrap();
+            t.cleanup()
+        })
     }
 
     fn resolve(&mut self, pc: u64) -> Option<Symbol> {
@@ -72,6 +89,7 @@ impl SymbolTable for ProcTable {
         let i = self
             .ranges
             .binary_search_by(|e| binary_search_elf_range(e, pc));
+
         if i.is_err() {
             return Some(Symbol::default());
         }
@@ -83,7 +101,7 @@ impl SymbolTable for ProcTable {
         return match et.resolve(pc) {
             Some(s) => {
                 let mr = r.map_range.lock().unwrap();
-                dbg!(&s, mr.pathname.clone());
+                // dbg!(&s, mr.pathname.clone());
                 Some(Symbol {
                     start: module_offset,
                     name: s,
@@ -148,32 +166,6 @@ impl ProcTable {
         }
     }
 
-    fn refresh(&mut self) {
-        if self.err.is_some() {
-            return;
-        }
-
-        let path = format!("/proc/{}/maps", self.pid.to_string());
-        match fs::read_to_string(&path) {
-            Ok(proc_maps) => match self.refresh_proc_map(proc_maps) {
-                Err(e) => {
-                    self.err = Some(e);
-                }
-                _ => {}
-            },
-            Err(e) => {
-                self.err = Some(ProcError(e.to_string()));
-            }
-        }
-    }
-
-    fn cleanup(&mut self) {
-        self.file_to_table.iter_mut().for_each(|(_, table)| {
-            let mut t = table.lock().unwrap();
-            t.cleanup()
-        })
-    }
-
     fn refresh_proc_map(&mut self, proc_maps: String) -> Result<()> {
         // todo support perf map files
         // for range in &mut self.ranges {
@@ -181,6 +173,7 @@ impl ProcTable {
         // }
         self.ranges.clear();
 
+        //dbg!(&proc_maps);
         let mut files_to_keep: HashMap<File, ()> = HashMap::new();
         let maps = match parse_proc_maps_executable_modules(proc_maps.deref(), true) {
             Ok(maps) => maps,
@@ -256,7 +249,6 @@ impl ProcTable {
     fn create_elf_table(&self, m: Arc<Mutex<ProcMap>>) -> Option<Arc<Mutex<ElfTable>>> {
         {
             let pathname = &m.lock().unwrap().pathname;
-            //dbg!(&pathname);
             if !pathname.starts_with('/') {
                 return None;
             }
@@ -287,7 +279,7 @@ pub fn parse_proc_maps_executable_modules(
             continue;
         }
         if let Some(module) = parse_proc_map_line(line, executable_only) {
-            //dbg!(&module);
+            //info!("parse_proc_map_line {} {} {}", line, &module.pathname, executable_only);
             modules.push(module);
         }
     }

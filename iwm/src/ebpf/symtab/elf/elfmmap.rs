@@ -36,6 +36,7 @@ pub struct SymbolsOptions {
 impl MappedElfFile {
     pub fn new(fpath: PathBuf) -> Result<Self> {
         dbg!(&fpath);
+
         let fd = File::open(&fpath);
         if fd.is_err() {
             return Err(MapError(fd.err().unwrap().to_string()));
@@ -71,6 +72,7 @@ impl MappedElfFile {
 
     fn open(&mut self) -> Result<()> {
         let fd = File::open(&self.fpath).unwrap();
+        dbg!(&self.fpath);
         self.fd = Some(fd);
         Ok(())
     }
@@ -106,11 +108,9 @@ impl MappedElfFile {
         if let Some(s) = self.string_cache.get(&start).cloned() {
             return Ok((s, true));
         }
-
         const TMP_BUF_SIZE: usize = 128;
         let mut tmp_buf = [0; TMP_BUF_SIZE];
         let mut sb = String::new();
-
         for i in 0..10 {
             let mut fd = self.fd.borrow_mut().as_ref().unwrap();
             fd.seek(SeekFrom::Start((start + i * TMP_BUF_SIZE) as u64)).unwrap();
@@ -229,8 +229,11 @@ fn get_link_index(typ: u32) -> SectionLinkIndex {
 }
 
 pub(crate) fn new_symbol_table(mut elf_file: MappedElfFile) -> Result<SymbolNameTable> {
+    dbg!("new_symbol_table");
     let (sym, section_sym) = elf_file.get_symbols(SHT_SYMTAB)?;
+    dbg!("elf_file.get_symbols(SHT_SYMTAB)");
     let (dynsym, section_dynsym) = elf_file.get_symbols(SHT_DYNSYM)?;
+    dbg!("elf_file.get_symbols(SHT_DYNSYM)");
     let total = dynsym.len() + sym.len();
     if total == 0 {
         return Err(SymbolError("No Symbol".to_string()));
@@ -241,17 +244,26 @@ pub(crate) fn new_symbol_table(mut elf_file: MappedElfFile) -> Result<SymbolName
     all.extend_from_slice(dynsym.as_slice());
     all.sort();
 
-    Ok(SymbolNameTable {
+    let mut res = SymbolNameTable {
         index: FlatSymbolIndex {
             links: Vec::from([
                 elf_file.section_headers[section_sym as usize].clone(),    // should be at 0 - SectionTypeSym
                 elf_file.section_headers[section_dynsym as usize].clone()  // should be at 1 - SectionTypeDynSym
             ]),
-            names: Vec::new(),
+            names: Vec::with_capacity(total),
             values: PCIndex::new(total)
         },
         file: elf_file
-    })
+    };
+
+    for (i, symbol) in all.iter().enumerate() {
+        res.index.names.push(symbol.name.clone());
+        res.index.values.set(i, symbol.value.clone());
+    }
+
+    //dbg!(&res.index.names);
+    //dbg!(&res.index.values);
+    Ok(res)
 }
 
 impl Drop for MappedElfFile {

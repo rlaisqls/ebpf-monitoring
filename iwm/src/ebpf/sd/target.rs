@@ -175,7 +175,7 @@ impl TargetFinder {
                 pid2_target.insert(pid, t);
             } else if let Some(cid) = container_id_from_target(target) {
                 let t = EbpfTarget::new(cid.clone(), 0, target.clone());
-                dbg!(&t);
+                //dbg!(&t);
                 container_id2_target.insert(cid, t);
             }
         }

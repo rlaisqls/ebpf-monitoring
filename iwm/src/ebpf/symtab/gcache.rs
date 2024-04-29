@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 
 
 pub trait Resource {
-    fn refresh(&mut self);
-    fn cleanup(&mut self);
+    fn refresh_resource(&mut self);
+    fn cleanup_resource(&mut self);
 }
 
 pub struct GCache<K: Eq + Hash + Clone, V: Resource> {
@@ -41,7 +41,7 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
             if entry.round != self.round {
                 entry.round = self.round;
                 let mut v = entry.v.lock().unwrap();
-                v.refresh();
+                v.refresh_resource();
             }
             Some(entry.v.clone())
         } else if let Some(e) = self.round_cache.get_mut(k) {
@@ -49,7 +49,7 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
             if entry.round != self.round {
                 entry.round = self.round;
                 let mut v = entry.v.lock().unwrap();
-                v.refresh();
+                v.refresh_resource();
             }
             Some(entry.v.clone())
         } else {
@@ -63,7 +63,7 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
             dbg!("waiting to get value lock");
             let mut value = e.v.lock().unwrap();
             dbg!("get value lock");
-            value.refresh();
+            value.refresh_resource();
         }
         let entry = Arc::new(Mutex::new(e));
         self.lru_cache.put(k.clone(), entry.clone());
@@ -81,14 +81,14 @@ impl<K: Eq + Hash + Clone, V: Resource> GCache<K, V> {
             .for_each(|(_k, e)| {
                 let entry = e.lock().unwrap();
                 let mut value = entry.v.lock().unwrap();
-                value.cleanup();
+                value.cleanup_resource();
             });
 
         self.round_cache.iter_mut()
             .for_each(|(_k, e)| {
                 let entry = e.lock().unwrap();
                 let mut value = entry.v.lock().unwrap();
-                value.cleanup();
+                value.cleanup_resource();
             });
 
         self.round_cache

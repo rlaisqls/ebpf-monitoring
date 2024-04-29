@@ -8,6 +8,7 @@ use goblin::elf::header::ET_EXEC;
 use goblin::elf::program_header::{PF_X, PT_LOAD};
 
 use rustix::path::Arg;
+use tracing::Instrument;
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 use crate::ebpf::symtab::elf::buildid::{BuildID, BuildIdentified};
@@ -65,7 +66,11 @@ impl ElfTable {
     fn load(&mut self) {
         if self.loaded { return; }
         self.loaded = true;
-        let fs_elf_file_path = PathBuf::from(&self.fs).join(&self.proc_map.lock().unwrap().pathname);
+
+        let fs_elf_file_path = {
+            let pm = self.proc_map.lock().unwrap();
+            PathBuf::from(format!("{}{}", &self.fs, &pm.pathname))
+        };
 
         let me_result = MappedElfFile::new(fs_elf_file_path.clone());
         let mut me = match me_result {
@@ -87,7 +92,7 @@ impl ElfTable {
             Err(err) => {
                 // if err != NotFound
                 self.on_load_error(&err);
-                return;
+                BuildID::new("".to_string(), "".to_string())
             }
         };
 
@@ -112,13 +117,15 @@ impl ElfTable {
         }
 
         if let Some(debug_file_path) = self.find_debug_file(&build_id, me.borrow_mut()) {
+            dbg!(&debug_file_path);
             if debug_file_path.is_empty() {
                 return;
             }
-            let debug_me_result = MappedElfFile::new(PathBuf::from(&self.fs).join(debug_file_path));
+            let debug_me_result = MappedElfFile::new(PathBuf::from(format!("{}{}", &self.fs, debug_file_path)));
             let debug_me = match debug_me_result {
                 Ok(file) => file,
                 Err(err) => {
+                    dbg!(&err);
                     self.on_load_error(&err);
                     return;
                 }
@@ -127,6 +134,7 @@ impl ElfTable {
             let symbols = Arc::new(Mutex::new(match create_symbol_table(debug_me) {
                 Ok(sym) => sym,
                 Err(err) => {
+                    dbg!(&err);
                     self.on_load_error(&err);
                     return;
                 }
@@ -145,6 +153,7 @@ impl ElfTable {
 
         self.table = symbols.clone();
         if build_id.is_empty() {
+            dbg!(stat_from_file_info(&file_info));
             self.options.elf_cache.cache_by_stat(stat_from_file_info(&file_info), symbols.clone());
         } else {
             self.options.elf_cache.cache_by_build_id(build_id, symbols.clone());
@@ -180,7 +189,6 @@ impl ElfTable {
         if let Some(debug_file) = self.find_debug_file_with_build_id(build_id) {
             return Some(debug_file);
         }
-
         // Attempt to find debug file with debug link
         self.find_debug_file_with_debug_link(elf_file)
     }
@@ -205,7 +213,11 @@ impl ElfTable {
 
         let pm = self.proc_map.lock().unwrap();
         let elf_file_path = Path::new(&pm.pathname);
-        let data = elf_file.section_data_by_section_name(".gnu_debuglink").unwrap();
+        let d = elf_file.section_data_by_section_name(".gnu_debuglink");
+        if d.is_err() {
+            return None
+        }
+        let data = d.unwrap();
 
         if data.len() < 6 {
             return None;
@@ -214,8 +226,9 @@ impl ElfTable {
         let raw_link = String::from_utf8_lossy(&data[..data.len() - 4]);
         let debug_link = raw_link.as_str().unwrap();
 
+        dbg!(&debug_link);
         let check_debug_file = |subdir: &str| -> Option<String> {
-            let fs_debug_file = elf_file_path.with_file_name(subdir).join(&debug_link);
+            let fs_debug_file = PathBuf::from(format!("{:?}{}", elf_file_path.with_file_name(subdir), &debug_link));
             if fs::metadata(&fs_debug_file).is_ok() {
                 return Some(fs_debug_file.to_string_lossy().to_string());
             }
@@ -223,15 +236,17 @@ impl ElfTable {
         };
 
         if let Some(debug_file) = check_debug_file("") {
+            info!("check_debug_file(\"\")");
             return Some(debug_file);
         }
         if let Some(debug_file) = check_debug_file(".debug") {
+            info!("check_debug_file(\".debug\")");
             return Some(debug_file);
         }
         if let Some(debug_file) = check_debug_file("/usr/lib/debug") {
+            info!("check_debug_file(\"/usr/lib/debug\")");
             return Some(debug_file);
         }
-
         None
     }
 
@@ -274,6 +289,7 @@ impl ElfTable {
 }
 
 fn create_symbol_table(me: MappedElfFile) -> Result<SymbolNameTable> {
+    info!("create symbol table path: {:?}", &me.fpath);
     match new_symbol_table(me) {
         Ok(table) => Ok(table),
         Err(sym_err) => {

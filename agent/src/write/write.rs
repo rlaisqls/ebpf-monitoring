@@ -124,7 +124,7 @@ impl Appender for FanOutClient {
                 value: lbs_builder.get(key).unwrap().clone(),
             }
         }).collect();
-        dbg!(&labels);
+        //dbg!(&labels);
         let samples: Vec<RawSample> = samples.iter().map(|sample| {
             RawSample {
                 raw_profile: sample.raw_profile.clone(),
@@ -132,14 +132,14 @@ impl Appender for FanOutClient {
             }
         }).collect();
 
-        dbg!(samples.len());
+        //dbg!(samples.len());
         let req = PushRequest {
             series: vec![RawProfileSeries {
                 labels,
                 samples,
             }],
         };
-        info!("{:?}", &req);
+        //info!("{:?}", &req);
         self.push(req).unwrap();
         Ok(())
     }

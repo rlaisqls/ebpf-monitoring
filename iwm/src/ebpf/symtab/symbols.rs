@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use log::{debug, error};
+use log::{debug, error, info};
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 
@@ -63,8 +63,10 @@ impl SymbolCache {
 
     pub fn get_proc_table(&mut self, pid: PidKey) -> Option<Arc<Mutex<ProcTable>>> {
         if let Some(cached) = self.pid_cache.get(&pid) {
+            //info!("use proc_table cache");
             return Some(cached.clone());
         }
+        info!("sym_cache.get_proc_table({})", &pid);
         let fresh = Arc::new(Mutex::new(ProcTable::new(
             pid as i32,
             ElfTableOptions {

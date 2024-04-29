@@ -52,3 +52,4 @@ features = ["poll", "event"]
 
 [build-dependencies]
 libbpf-cargo = "0.22.1"
+tonic-build = "0.11.0"

@@ -40,8 +40,8 @@ impl SymbolTab {
 impl SymbolTable for SymbolTab {
     fn refresh(&mut self) {}
     fn cleanup(&mut self) {}
-
     fn resolve(&mut self, addr: u64) -> Option<Symbol> {
+        //info!("SymbolTable resolve");
         if self.symbols.is_empty() {
             return None;
         }

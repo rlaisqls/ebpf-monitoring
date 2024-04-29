@@ -35,7 +35,7 @@ use crate::common::registry::Options;
 use crate::discover::discover::Target;
 use crate::write::write::FanOutClient;
 pub mod push_api {
-    include!("../api/push/push.v1.rs");
+    include!("../gen/push/push.v1.rs");
 }
 
 #[derive(Clone)]
@@ -133,7 +133,7 @@ impl EbpfLinuxComponent<'_> {
 
     fn collect_profiles(&mut self) -> Result<()> {
         let builders = Arc::new(Mutex::new(pprof::ProfileBuilders::new(
-            BuildersOptions { sample_rate: 1000, per_pid_profile: false }
+            BuildersOptions { sample_rate: 97, per_pid_profile: false }
         )));
         {
             let mut s = self.session.lock().unwrap();
@@ -143,7 +143,7 @@ impl EbpfLinuxComponent<'_> {
         let bb = builders.clone();
         let b = bb.lock().unwrap();
         for (_, builder) in &b.builders {
-            dbg!(&builder.pprof_builder.profile.string_table);
+            //dbg!(&builder.pprof_builder.profile.string_table);
             let sn = builder.labels.get(LABEL_SERVICE_NAME);
             let a = sn.unwrap();
             let service_name = a.trim();
@@ -155,7 +155,7 @@ impl EbpfLinuxComponent<'_> {
                 .inc_by(builder.pprof_builder.profile.sample.len() as f64);
 
             let mut buf = vec![];
-            info!("{:?}",&builder.pprof_builder.profile.string_table);
+            //info!("{:?}",&builder.pprof_builder.profile.string_table);
             builder.write(&mut buf);
 
             let raw_profile: Vec<u8> = buf.into();
@@ -193,7 +193,7 @@ fn convert_session_options(_args: &Arguments, ms: Arc<ProfileMetrics>) -> Sessio
     let keep_rounds = 3;//args.cache_rounds.unwrap_or(3);
     SessionOptions {
         collect_user: true, // args.collect_user_profile.unwrap_or(true),
-        collect_kernel: true, //args.collect_kernel_profile.unwrap_or(true),
+        collect_kernel: false, //args.collect_kernel_profile.unwrap_or(true),
         unknown_symbol_module_offset: false,
         sample_rate: 97, //args.sample_rate.unwrap_or(97) as u32,
         python_enabled: true, //args.python_enabled.unwrap_or(true),

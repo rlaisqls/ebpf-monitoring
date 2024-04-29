@@ -1,6 +1,6 @@
 use std::convert::From;
 
-
+#[derive(Debug)]
 pub struct PCIndex {
     i32: Option<Vec<u32>>,
     i64: Option<Vec<u64>>,
@@ -14,7 +14,7 @@ impl PCIndex {
         }
     }
 
-    fn set(&mut self, idx: usize, value: u64) {
+    pub(crate) fn set(&mut self, idx: usize, value: u64) {
         if let Some(i32_vec) = &mut self.i32 {
             if value < u64::from(u32::MAX) {
                 i32_vec[idx] = value as u32;

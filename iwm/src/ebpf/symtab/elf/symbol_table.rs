@@ -46,8 +46,8 @@ pub struct SymbolNameTable {
 }
 
 impl Resource for SymbolNameTable {
-    fn refresh(&mut self) {}
-    fn cleanup(&mut self) {
+    fn refresh_resource(&mut self) {}
+    fn cleanup_resource(&mut self) {
         self.file.close();
     }
 }
