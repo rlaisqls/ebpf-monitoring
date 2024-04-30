@@ -1,4 +1,4 @@
-use log::info;
+
 use crate::ebpf::symtab::symtab::SymbolTable;
 
 #[derive(Clone, Debug)]

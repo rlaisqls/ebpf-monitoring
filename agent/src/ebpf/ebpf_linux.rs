@@ -7,10 +7,10 @@ use std::{
 use std::fs::File;
 use std::sync::Mutex;
 use std::borrow::Borrow;
-use std::ops::Deref;
-use std::thread;
 
-use log::{error, info};
+
+
+use log::{error};
 use tokio::time::interval;
 use iwm::common::collector;
 use iwm::ebpf::metrics::ebpf_metrics::EbpfMetrics;
@@ -18,13 +18,13 @@ use iwm::ebpf::metrics::metrics::ProfileMetrics;
 
 use iwm::ebpf::{pprof};
 use iwm::ebpf::pprof::BuildersOptions;
-use iwm::ebpf::ring::reader::Reader;
+
 use iwm::ebpf::sd::target::{LABEL_SERVICE_NAME, TargetFinder, TargetsOptions};
 use iwm::ebpf::session::{Session, SessionDebugInfo, SessionOptions};
 use iwm::ebpf::symtab::elf_module::SymbolOptions;
 use iwm::ebpf::symtab::gcache::{GCacheOptions};
 use iwm::ebpf::symtab::symbols::CacheOptions;
-use iwm::ebpf::sync::PidOp;
+
 use iwm::error::Error::OSError;
 
 use iwm::error::Result;
@@ -155,7 +155,7 @@ impl EbpfLinuxComponent<'_> {
                 .inc_by(builder.pprof_builder.profile.sample.len() as f64);
 
             let mut buf = vec![];
-            //info!("{:?}",&builder.pprof_builder.profile.string_table);
+            //info!("{:?}",&builder.pprof_builder.profile);
             builder.write(&mut buf);
 
             let raw_profile: Vec<u8> = buf.into();
@@ -190,29 +190,26 @@ impl EbpfLinuxComponent<'_> {
 }
 
 fn convert_session_options(_args: &Arguments, ms: Arc<ProfileMetrics>) -> SessionOptions {
-    let keep_rounds = 3;//args.cache_rounds.unwrap_or(3);
+    let keep_rounds = 3;
     SessionOptions {
-        collect_user: true, // args.collect_user_profile.unwrap_or(true),
-        collect_kernel: false, //args.collect_kernel_profile.unwrap_or(true),
-        unknown_symbol_module_offset: false,
-        sample_rate: 97, //args.sample_rate.unwrap_or(97) as u32,
-        python_enabled: true, //args.python_enabled.unwrap_or(true),
+        collect_user: true,
+        collect_kernel: true,
+        unknown_symbol_module_offset: true,
+        unknown_symbol_address: true,
+        sample_rate: 97,
+        python_enabled: true,
         cache_options: CacheOptions {
             pid_cache_options: GCacheOptions {
-                size: 32, //args.pid_cache_size.unwrap_or(32) as usize,
-                keep_rounds
+                size: 32, keep_rounds
             },
             build_id_cache_options: GCacheOptions {
-                size: 64, //args.build_id_cache_size.unwrap_or(64) as usize,
-                keep_rounds
+                size: 64, keep_rounds
             },
             same_file_cache_options: GCacheOptions {
-                size: 8, //args.same_file_cache_size.unwrap_or(8) as usize,
-                keep_rounds
+                size: 8, keep_rounds
             },
             symbol_options: SymbolOptions::default()
         },
-        unknown_symbol_address: false,
         metrics: ms,
     }
 }

@@ -11,6 +11,18 @@ pub struct ProcMapPermissions {
     pub(crate) private: bool,
 }
 
+impl Default for ProcMapPermissions {
+    fn default() -> Self {
+        ProcMapPermissions {
+            read: true,
+            write: true,
+            execute: true,
+            shared: true,
+            private: true,
+        }
+    }
+}
+
 // ProcMap contains the process memory-mappings of the process
 // read from `/proc/[pid]/maps`.
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
@@ -60,38 +72,6 @@ impl Default for ProcMap {
             inode: 0,
         }
     }
-}
-
-fn parse_proc_map_line(line: &str, executable_only: bool) -> Result<Option<ProcMap>, &'static str> {
-    dbg!(line);
-    let mut parts = line.split_whitespace();
-    let err_msg = "Invalid procmap entry";
-    let addrs_str = parts.next().ok_or(err_msg).unwrap();
-    let perms_str = parts.next().ok_or(err_msg).unwrap();
-    let offset_str = parts.next().ok_or(err_msg).unwrap();
-    let device_str = parts.next().ok_or(err_msg).unwrap();
-    let inode_str = parts.next().unwrap_or_default();
-    let pathname = parts.collect::<Vec<&str>>().join(" ");
-
-    let perms = parse_permissions(perms_str).unwrap();
-    if executable_only && !perms.execute {
-        return Ok(None);
-    }
-
-    let (start_addr, end_addr) = parse_addresses(addrs_str).unwrap();
-    let offset = i64::from_str_radix(offset_str, 16).map_err(|_| "Invalid offset").unwrap();
-    let dev = parse_device(device_str).unwrap();
-    let inode = u64::from_str(inode_str).unwrap_or_default();
-
-    Ok(Some(ProcMap {
-        start_addr,
-        end_addr,
-        perms,
-        offset,
-        dev,
-        inode,
-        pathname,
-    }))
 }
 
 fn parse_permissions(s: &str) -> Option<ProcMapPermissions> {

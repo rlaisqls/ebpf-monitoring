@@ -127,8 +127,7 @@ impl PerfBuffer {
 			} as usize;
 
 			let sample_start =
-				(event_start + mem::size_of::<perf_event_header>() + mem::size_of::<u32>())
-					% self.size;
+				(event_start + mem::size_of::<perf_event_header>() + mem::size_of::<u32>()) % self.size;
 
 			match event_type {
 				x if x == PERF_RECORD_SAMPLE as u32 => {
@@ -164,8 +163,7 @@ impl PerfBuffer {
 			let buf = &mut buffers[buf_n];
 
 			let event_start = tail % self.size;
-			let event =
-				unsafe { ptr::read_unaligned((base + event_start) as *const perf_event_header) };
+			let event = unsafe { ptr::read_unaligned((base + event_start) as *const perf_event_header) };
 			let event_size = event.size as usize;
 
 			match read_event(event_start, event.type_, base, buf) {

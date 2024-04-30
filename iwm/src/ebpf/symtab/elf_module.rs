@@ -8,7 +8,7 @@ use goblin::elf::header::ET_EXEC;
 use goblin::elf::program_header::{PF_X, PT_LOAD};
 
 use rustix::path::Arg;
-use tracing::Instrument;
+
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 use crate::ebpf::symtab::elf::buildid::{BuildID, BuildIdentified};
@@ -222,7 +222,6 @@ impl ElfTable {
         if data.len() < 6 {
             return None;
         }
-
         let raw_link = String::from_utf8_lossy(&data[..data.len() - 4]);
         let debug_link = raw_link.as_str().unwrap();
 
@@ -236,15 +235,12 @@ impl ElfTable {
         };
 
         if let Some(debug_file) = check_debug_file("") {
-            info!("check_debug_file(\"\")");
             return Some(debug_file);
         }
         if let Some(debug_file) = check_debug_file(".debug") {
-            info!("check_debug_file(\".debug\")");
             return Some(debug_file);
         }
         if let Some(debug_file) = check_debug_file("/usr/lib/debug") {
-            info!("check_debug_file(\"/usr/lib/debug\")");
             return Some(debug_file);
         }
         None

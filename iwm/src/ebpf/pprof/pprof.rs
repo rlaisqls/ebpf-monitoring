@@ -21,7 +21,6 @@ impl Default for PProfBuilder {
     }
 }
 
-
 #[derive(Hash, PartialEq, Eq, Clone)]
 pub struct LocationMirror {
     pub function_id: u64,

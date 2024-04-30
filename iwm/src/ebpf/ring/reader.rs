@@ -112,13 +112,10 @@ impl Reader {
             if len == 0 { continue; }
 
             let mut buffers = vec![BytesMut::with_capacity(PERF_EVENT_HEADER_SIZE)];
-            let (Events { read, lost }, cpu) = {
+            let (Events { read: _read, lost }, cpu) = {
                 let mut ring = self.epoll_rings[len - 1].lock().unwrap();
                 (ring.read_events(&mut buffers).unwrap(), ring.cpu)
             };
-            for bb in buffers.iter().take(read) {
-                dbg!(bb);
-            }
             self.epoll_rings.pop();
             return Ok(Record {
                 cpu,

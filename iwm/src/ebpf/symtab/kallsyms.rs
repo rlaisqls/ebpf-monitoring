@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use log::info;
+
 use crate::ebpf::symtab::table::{Symbol, SymbolTab};
 use crate::error::Error::SymbolError;
 use crate::error::Result;

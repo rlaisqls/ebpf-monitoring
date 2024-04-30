@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::sync::{Mutex};
 use lru::LruCache;
 use log::{debug, warn, info};
-use sha256::Sha256Digest;
+
 
 use crate::common::labels::Labels;
 use crate::ebpf::sd::container_id::{container_id_from_target, get_container_id_from_pid};
@@ -169,13 +169,11 @@ impl TargetFinder {
         let mut pid2_target = HashMap::new();
 
         for target in &opts.targets {
-            info!("{}", target["__address__"]);
             if let Some(pid) = pid_from_target(target) {
                 let t = EbpfTarget::new("".to_string(), pid.clone(), target.clone());
                 pid2_target.insert(pid, t);
             } else if let Some(cid) = container_id_from_target(target) {
                 let t = EbpfTarget::new(cid.clone(), 0, target.clone());
-                //dbg!(&t);
                 container_id2_target.insert(cid, t);
             }
         }

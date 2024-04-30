@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use log::{debug, error, info};
+use log::{error, info};
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 

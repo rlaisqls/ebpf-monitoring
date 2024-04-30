@@ -1,13 +1,12 @@
 use std::cmp::Ordering::{Equal, Greater, Less};
 use std::collections::HashMap;
 use std::fs;
-use std::fs::Permissions;
+
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use log::info;
-use rustix::path::Arg;
-use tokio::io::split;
+
 
 use crate::ebpf::symtab::elf::symbol_table::SymTabDebugInfo;
 use crate::ebpf::symtab::elf_module::{ElfTable, ElfTableOptions};
@@ -56,12 +55,23 @@ impl SymbolTable for ProcTable {
         if self.err.is_some() {
             return;
         }
+        info!("/proc/{}/maps", self.pid.to_string());
         let path = format!("/proc/{}/maps", self.pid.to_string());
+        self.ranges.clear();
         match fs::read_to_string(&path) {
-            Ok(proc_maps) => match self.refresh_proc_map(proc_maps) {
-                Err(e) => {
-                    self.err = Some(e);
-                }
+            Ok(proc_maps) => match self.push_proc_maps(proc_maps) {
+                Err(e) => { self.err = Some(e); }
+                _ => {}
+            },
+            Err(e) => {
+                self.err = Some(ProcError(e.to_string()));
+            }
+        }
+        info!("/tmp/perf-{}.map", self.pid.to_string());
+        let perf_path = format!("/tmp/perf-{}.map", "804423");
+        match fs::read_to_string(&perf_path) {
+            Ok(perf_maps) => match self.push_perf_maps(perf_maps) {
+                Err(e) => { self.err = Some(e); }
                 _ => {}
             },
             Err(e) => {
@@ -98,10 +108,10 @@ impl SymbolTable for ProcTable {
         let r = rr.lock().unwrap();
         let mut et = r.elf_table.lock().unwrap();
         let module_offset = pc - et.base;
+
         return match et.resolve(pc) {
             Some(s) => {
                 let mr = r.map_range.lock().unwrap();
-                // dbg!(&s, mr.pathname.clone());
                 Some(Symbol {
                     start: module_offset,
                     name: s,
@@ -166,14 +176,7 @@ impl ProcTable {
         }
     }
 
-    fn refresh_proc_map(&mut self, proc_maps: String) -> Result<()> {
-        // todo support perf map files
-        // for range in &mut self.ranges {
-        //     range.elf_table = None;
-        // }
-        self.ranges.clear();
-
-        //dbg!(&proc_maps);
+    fn push_proc_maps(&mut self, proc_maps: String) -> Result<()> {
         let mut files_to_keep: HashMap<File, ()> = HashMap::new();
         let maps = match parse_proc_maps_executable_modules(proc_maps.deref(), true) {
             Ok(maps) => maps,
@@ -203,27 +206,47 @@ impl ProcTable {
         Ok(())
     }
 
+    fn push_perf_maps(&mut self, perf_maps: String) -> Result<()> {
+        dbg!("push_perf_maps(&mut self, perf_maps: String)");
+        let mut files_to_keep: HashMap<File, ()> = HashMap::new();
+        let maps = match parse_perf_maps_executable_modules(perf_maps.deref()) {
+            Ok(maps) => maps,
+            Err(err) => return Err(err),
+        };
+        info!("{:?}", &maps);
+
+        for map in maps {
+            files_to_keep.insert(map.file(), ());
+            let m = Arc::new(Mutex::new(map));
+            if let Some(elf_table) = self.get_elf_table(m.clone()) {
+                self.ranges.push(Arc::new(Mutex::new(ElfRange {
+                    map_range: m.clone(),
+                    elf_table,
+                })));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn debug_info(&self) -> ProcTableDebugInfo {
         let mut res = ProcTableDebugInfo {
             pid: self.pid,
             size: self.file_to_table.len(),
             elf_tables: HashMap::new(),
-            last_used_round: 0,
+            last_used_round: 0
         };
         for (file, elf) in &self.file_to_table {
             let e = elf.lock().unwrap();
             let table = e.table.lock().unwrap();
             let d = table.debug_info();
             if d.size != 0 {
-                res.elf_tables
-                    .insert(format!("{} {} {}", file.dev, file.inode, file.path), d);
+                res.elf_tables.insert(format!("{} {} {}", file.dev, file.inode, file.path), d);
             }
         }
         res
     }
 
     fn get_elf_table(&mut self, rr: Arc<Mutex<ProcMap>>) -> Option<Arc<Mutex<ElfTable>>> {
-
         {
             let r = rr.lock().unwrap();
             //dbg!(self.file_to_table.len());
@@ -265,7 +288,6 @@ pub fn parse_proc_maps_executable_modules(
     proc_maps: &str,
     executable_only: bool,
 ) -> Result<Vec<ProcMap>> {
-    //dbg!("parse_proc_maps_executable_modules");
     let mut modules = Vec::new();
     let mut remaining = proc_maps;
     while !remaining.is_empty() {
@@ -279,16 +301,58 @@ pub fn parse_proc_maps_executable_modules(
             continue;
         }
         if let Some(module) = parse_proc_map_line(line, executable_only) {
-            //info!("parse_proc_map_line {} {} {}", line, &module.pathname, executable_only);
             modules.push(module);
         }
     }
-    //dbg!(modules.len());
     Ok(modules)
 }
 
+pub fn parse_perf_maps_executable_modules(perf_maps: &str) -> Result<Vec<ProcMap>> {
+    let mut modules = Vec::new();
+    let mut remaining = perf_maps;
+    while !remaining.is_empty() {
+        let nl = remaining
+            .chars()
+            .position(|x| x == '\n')
+            .unwrap_or(remaining.len());
+        let (line, rest) = remaining.split_at(nl);
+        remaining = if rest.is_empty() { rest } else { &rest[1..] };
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(module) = parse_perf_map_line(line) {
+            modules.push(module);
+        }
+    }
+    Ok(modules)
+}
+
+// ffff7c045b40 10c arrayof_jint_disjoint_arraycopy
+fn parse_perf_map_line(line: &str) -> Option<ProcMap> {
+    let mut parts = line.split(' ');
+    let start_addr_bytes = parts.next().unwrap();
+    let size = parts.next().unwrap();
+    let pathname = line.rsplit(' ').next().unwrap();
+
+    let perms = ProcMapPermissions::default();
+    let start_addr = u64::from_str_radix(start_addr_bytes, 16).unwrap();
+    let end_addr = start_addr + u64::from_str_radix(size, 16).unwrap();
+
+    let res = ProcMap {
+        start_addr,
+        end_addr,
+        perms,
+        offset: 0,
+        dev: 0,
+        inode: 0,
+        pathname: pathname.to_string(),
+    };
+    dbg!(&res);
+    Some(res)
+}
+
+// 7f5822ebe000-7f5822ec0000 r--p 00000000 09:00 533429  /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
 fn parse_proc_map_line(line: &str, executable_only: bool) -> Option<ProcMap> {
-    //info!("parse_proc_map_line {}", line);
     let mut parts = line.split(' ');
     let addresses_bytes = parts.next().unwrap();
     let perms_bytes = parts.next().unwrap();
@@ -296,8 +360,6 @@ fn parse_proc_map_line(line: &str, executable_only: bool) -> Option<ProcMap> {
     let device_bytes = parts.next().unwrap();
     let inode_bytes = parts.next().unwrap();
     let pathname = line.rsplit(' ').next().unwrap();
-
-    // info!("parsed datas ({}) ({}) ({}) ({}) ({}) ({})", addresses_bytes, perms_bytes, offset_bytes, device_bytes, inode_bytes, pathname);
 
     let perms = parse_permissions(perms_bytes).unwrap();
     if executable_only && !perms.execute {
@@ -309,7 +371,7 @@ fn parse_proc_map_line(line: &str, executable_only: bool) -> Option<ProcMap> {
     let dev = parse_device(device_bytes).unwrap();
     let inode = u64::from_str_radix(inode_bytes, 10).unwrap();
 
-    Some(ProcMap {
+    let res = ProcMap {
         start_addr,
         end_addr,
         perms,
@@ -317,10 +379,12 @@ fn parse_proc_map_line(line: &str, executable_only: bool) -> Option<ProcMap> {
         dev,
         inode,
         pathname: pathname.to_string(),
-    })
+    };
+    info!("{:?}", res);
+    Some(res)
 }
 
-fn parse_permissions(perms_bytes: &str) -> Result<ProcMapPermissions, ()> {
+fn parse_permissions(perms_bytes: &str) -> Result<ProcMapPermissions> {
     let mut perms = ProcMapPermissions {
         read: false,
         write: false,

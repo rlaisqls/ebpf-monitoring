@@ -9,6 +9,7 @@ use goblin::elf::{Elf, Header, ProgramHeaders, SectionHeader, SectionHeaders};
 use goblin::elf::header::{EI_CLASS, ELFCLASS32, ELFCLASS64};
 use goblin::elf::section_header::{SHT_DYNSYM, SHT_SYMTAB};
 use goblin::elf::sym::{STT_FUNC, sym32, sym64};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::ebpf::symtab::elf::pcindex::PCIndex;
 use crate::ebpf::symtab::elf::symbol_table::{FlatSymbolIndex, SECTION_TYPE_DYN_SYM, SECTION_TYPE_SYM, SectionLinkIndex, SymbolIndex, SymbolNameTable};
@@ -72,7 +73,6 @@ impl MappedElfFile {
 
     fn open(&mut self) -> Result<()> {
         let fd = File::open(&self.fpath).unwrap();
-        dbg!(&self.fpath);
         self.fd = Some(fd);
         Ok(())
     }
@@ -112,7 +112,10 @@ impl MappedElfFile {
         let mut tmp_buf = [0; TMP_BUF_SIZE];
         let mut sb = String::new();
         for i in 0..10 {
-            let mut fd = self.fd.borrow_mut().as_ref().unwrap();
+            let f = self.fd.borrow_mut().as_ref();
+            if f.is_none() { continue; }
+
+            let mut fd = f.unwrap();
             fd.seek(SeekFrom::Start((start + i * TMP_BUF_SIZE) as u64)).unwrap();
             fd.read_exact(&mut tmp_buf).unwrap();
 
@@ -229,11 +232,8 @@ fn get_link_index(typ: u32) -> SectionLinkIndex {
 }
 
 pub(crate) fn new_symbol_table(mut elf_file: MappedElfFile) -> Result<SymbolNameTable> {
-    dbg!("new_symbol_table");
     let (sym, section_sym) = elf_file.get_symbols(SHT_SYMTAB)?;
-    dbg!("elf_file.get_symbols(SHT_SYMTAB)");
     let (dynsym, section_dynsym) = elf_file.get_symbols(SHT_DYNSYM)?;
-    dbg!("elf_file.get_symbols(SHT_DYNSYM)");
     let total = dynsym.len() + sym.len();
     if total == 0 {
         return Err(SymbolError("No Symbol".to_string()));

@@ -1,0 +1,37 @@
+version: '3.1'
+
+services:
+  springboot:
+    image: rlaisqls/test
+    restart: always # This will be ignored if we deploy in docker swarm
+    environment:
+    - MONGO_DB_HOSTNAME=mongo
+    - MONGO_DB_USERNAME=devdb
+    - MONGO_DB_PASSWORD=devdb123
+    ports:
+      - 8080:8080
+    working_dir: /opt/app
+    depends_on:
+      - mongo
+    networks:
+    - springappnetwork  
+
+  mongo:
+    image: arm64v8/mongo
+    platform: arm64
+    environment:
+    - MONGO_INITDB_ROOT_USERNAME=devdb
+    - MONGO_INITDB_ROOT_PASSWORD=devdb123
+    volumes:
+      - mongodb:/data/db
+    restart: always
+    networks:
+    - springappnetwork
+    
+volumes:
+  mongodb:
+    external: true
+    
+networks:
+  springappnetwork:
+    external: true

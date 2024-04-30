@@ -7,7 +7,7 @@ use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd, RawFd};
 
 use libbpf_sys::{bpf_attr, bpf_cmd, BPF_MAP_LOOKUP_AND_DELETE_ELEM, BPF_MAP_UPDATE_ELEM, PERF_COUNT_SW_BPF_OUTPUT, perf_event_attr, PERF_FLAG_FD_CLOEXEC, PERF_SAMPLE_RAW, PERF_TYPE_SOFTWARE};
-use libc::{ENOENT, pid_t};
+use libc::{pid_t};
 use crate::ebpf::ring::{Syscall, syscall};
 
 use crate::error::Error::InvalidData;

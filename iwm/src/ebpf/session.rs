@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::default::Default;
 use std::ffi::c_void;
 use std::io::Read;
-use std::ops::Deref;
+
 
 use std::os::fd::{AsFd, AsRawFd, RawFd};
 use std::path::Path;
@@ -18,11 +18,11 @@ use libbpf_rs::libbpf_sys::bpf_map_batch_opts;
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use libbpf_rs::{libbpf_sys, Link, MapFlags, Program};
 use libbpf_sys::{
-    __u32, bpf_map_delete_elem, bpf_map_lookup_and_delete_batch, bpf_map_lookup_batch,
+    __u32, bpf_map_delete_elem, bpf_map_lookup_batch,
     bpf_map_lookup_elem, size_t,
 };
 use log::{debug, error, info};
-use polling::AsRawSource;
+
 
 use tokio::io::AsyncReadExt;
 
@@ -33,16 +33,16 @@ use crate::common::collector::{ProfileSample, SampleType};
 use crate::ebpf::metrics::metrics::ProfileMetrics;
 use crate::ebpf::ring::perf_event::PerfEvent;
 use crate::ebpf::ring::reader::Reader;
-use crate::ebpf::ring::sys::bpf_map_lookup_and_delete_elem;
+
 
 use crate::ebpf::sd::target::{EbpfTarget, TargetFinder, TargetsOptions};
-use crate::ebpf::session::profile::profile_bss_types::{pid_config, pid_event, sample_key};
+use crate::ebpf::session::profile::profile_bss_types::{pid_config, sample_key};
 use crate::ebpf::symtab::elf_cache::ElfCacheDebugInfo;
 use crate::ebpf::symtab::gcache::{GCacheDebugInfo, Resource};
 use crate::ebpf::symtab::proc::ProcTableDebugInfo;
 use crate::ebpf::symtab::symbols::{CacheOptions, SymbolCache};
 use crate::ebpf::symtab::symtab::SymbolTable;
-use crate::ebpf::sync::{PidOp, ProfilingType};
+use crate::ebpf::sync::{ProfilingType};
 use crate::ebpf::wait_group::WaitGroup;
 use crate::error::Error::{InvalidData, OSError};
 use crate::error::Result;
@@ -301,85 +301,6 @@ impl Session<'_> {
         }
     }
 
-    fn read_events(&mut self) {
-        info!("read_events");
-
-        let mut events_reader = Arc::new(Mutex::new(
-            Reader::new(self.bpf.maps().events().deref()).unwrap(),
-        ));
-
-        loop {
-            let mut er = events_reader.lock().unwrap();
-            match er.read_events() {
-                Ok(record) => {
-                    if record.lost_samples != 0 {
-                        error!(
-                            "perf event ring buffer full, dropped samples: {}",
-                            record.lost_samples
-                        );
-                    }
-
-                    for rs in record.raw_samples.iter() {
-                        let raw_sample = rs.to_vec();
-                        if raw_sample.len() < 8 {
-                            error!("perf event record too small: {}", raw_sample.len());
-                            continue;
-                        }
-
-                        let e = pid_event {
-                            op: u32::from_le_bytes([
-                                raw_sample[0],
-                                raw_sample[1],
-                                raw_sample[2],
-                                raw_sample[3],
-                            ]),
-                            pid: u32::from_le_bytes([
-                                raw_sample[4],
-                                raw_sample[5],
-                                raw_sample[6],
-                                raw_sample[7],
-                            ]),
-                        };
-
-                        if e.op == PidOp::RequestUnknownProcessInfo.to_u32() {
-                            match self.process_pid_info_requests(e.pid) {
-                                Ok(_) => {}
-                                Err(_) => {
-                                    error!(
-                                        "pid info request queue full, dropping request: {}",
-                                        e.pid
-                                    );
-                                }
-                            }
-                        } else if e.op == PidOp::Dead.to_u32() {
-                            match self.process_dead_pids_events(e.pid) {
-                                Ok(_) => {}
-                                Err(_) => {
-                                    error!("dead pid info queue full, dropping event: {}", e.pid);
-                                }
-                            }
-                        } else if e.op == PidOp::RequestExecProcessInfo.to_u32() {
-                            match self.process_pid_exec_requests(e.pid) {
-                                Ok(_) => {}
-                                Err(_) => {
-                                    error!(
-                                        "pid exec request queue full, dropping event: {}",
-                                        e.pid
-                                    );
-                                }
-                            }
-                        } else {
-                            error!("unknown perf event record: op={}, pid={}", e.op, e.pid);
-                        }
-                    }
-                }
-                Err(err) => {
-                    error!("reading from perf event reader: {}", err);
-                }
-            }
-        }
-    }
-
     pub fn process_pid_info_requests(&mut self, pid: u32) -> Result<()> {
         let already_dead = {
             let pids = self.pids.lock().unwrap();
@@ -565,7 +486,7 @@ impl Session<'_> {
                         debug!("pid {} is dead", &ck.pid);
                         continue;
                     }
-                    let mut stats = StackResolveStats::default();
+                    let stats = StackResolveStats::default();
                     let proc = {
                         let mut sym_cache = self.sym_cache.lock().unwrap();
                         if sym_cache.get_proc_table(ck.pid).is_none() {
@@ -596,6 +517,7 @@ impl Session<'_> {
                 }
                 // info!("{:?}", &sb.stack);
                 if sb.stack.len() > 1 {
+                    sb.stack.reverse();
                     cb(ProfileSample {
                         target: &labels,
                         pid: ck.pid,
