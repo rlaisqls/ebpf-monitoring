@@ -213,7 +213,7 @@ impl ProcTable {
             Ok(maps) => maps,
             Err(err) => return Err(err),
         };
-        info!("{:?}", &maps);
+        // info!("{:?}", &maps);
 
         for map in maps {
             files_to_keep.insert(map.file(), ());
@@ -347,7 +347,6 @@ fn parse_perf_map_line(line: &str) -> Option<ProcMap> {
         inode: 0,
         pathname: pathname.to_string(),
     };
-    dbg!(&res);
     Some(res)
 }
 
@@ -380,7 +379,6 @@ fn parse_proc_map_line(line: &str, executable_only: bool) -> Option<ProcMap> {
         inode,
         pathname: pathname.to_string(),
     };
-    info!("{:?}", res);
     Some(res)
 }
 

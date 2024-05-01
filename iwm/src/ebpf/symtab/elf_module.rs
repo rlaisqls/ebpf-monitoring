@@ -38,6 +38,12 @@ impl Default for SymbolOptions {
     }
 }
 
+impl SymbolOptions {
+    fn new(python_full_file_path: bool) -> Self {
+        Self { python_full_file_path }
+    }
+}
+
 pub struct ElfTable {
     fs: String,
     pub(crate) table: Arc<Mutex<dyn SymbolNameResolver + Send>>,
@@ -131,7 +137,7 @@ impl ElfTable {
                 }
             };
 
-            let symbols = Arc::new(Mutex::new(match create_symbol_table(debug_me) {
+            let symbols = Arc::new(Mutex::new(match SymbolNameTable::new(debug_me) {
                 Ok(sym) => sym,
                 Err(err) => {
                     dbg!(&err);
@@ -144,7 +150,7 @@ impl ElfTable {
             return;
         }
 
-        let symbols = Arc::new(Mutex::new(match create_symbol_table(me) {
+        let symbols = Arc::new(Mutex::new(match SymbolNameTable::new(me) {
             Ok(sym) => sym,
             Err(_err) => {
                 return;
@@ -198,34 +204,29 @@ impl ElfTable {
         if id.len() < 3 || !build_id.is_gnu() {
             return None;
         }
-
         let debug_file = format!("/usr/lib/debug/.build-id/{}/{}.debug", &id[0..2], &id[2..]);
         let fs_debug_file = Path::new(&self.fs).join(&debug_file);
-
         if fs_debug_file.exists() {
             return Some(debug_file);
         }
-
         None
     }
 
     fn find_debug_file_with_debug_link(&self, elf_file: &mut MappedElfFile) -> Option<String> {
-
         let pm = self.proc_map.lock().unwrap();
         let elf_file_path = Path::new(&pm.pathname);
         let d = elf_file.section_data_by_section_name(".gnu_debuglink");
         if d.is_err() {
             return None
         }
-        let data = d.unwrap();
 
+        let data = d.unwrap();
         if data.len() < 6 {
             return None;
         }
         let raw_link = String::from_utf8_lossy(&data[..data.len() - 4]);
         let debug_link = raw_link.as_str().unwrap();
 
-        dbg!(&debug_link);
         let check_debug_file = |subdir: &str| -> Option<String> {
             let fs_debug_file = PathBuf::from(format!("{:?}{}", elf_file_path.with_file_name(subdir), &debug_link));
             if fs::metadata(&fs_debug_file).is_ok() {
@@ -246,12 +247,11 @@ impl ElfTable {
         None
     }
 
-    pub(crate) fn resolve(&mut self, mut pc: u64) -> Option<String> {
+    pub fn resolve(&mut self, mut pc: u64) -> Option<String> {
         if !self.loaded {
             self.load();
         }
         if let Some(_err) = &self.err { return None; }
-
         pc -= self.base;
         {
             let mut table = self.table.lock().unwrap();
@@ -273,7 +273,6 @@ impl ElfTable {
         self.load();
 
         if let Some(_err) = &self.err { return None; }
-
         let mut table = self.table.lock().unwrap();
         table.resolve(pc)
     }
@@ -286,18 +285,10 @@ impl ElfTable {
 
 fn create_symbol_table(me: MappedElfFile) -> Result<SymbolNameTable> {
     info!("create symbol table path: {:?}", &me.fpath);
-    match new_symbol_table(me) {
+    match SymbolNameTable::new(me) {
         Ok(table) => Ok(table),
         Err(sym_err) => {
             return Err(sym_err);
-        }
-    }
-}
-
-impl SymbolOptions {
-    fn new(python_full_file_path: bool) -> Self {
-        Self {
-            python_full_file_path
         }
     }
 }

@@ -1,4 +1,4 @@
-
+use goblin::elf32::section_header::{SHT_DYNSYM, SHT_SYMTAB};
 use goblin::elf::SectionHeader;
 
 use crate::ebpf::symtab::elf::elfmmap::MappedElfFile;
@@ -6,6 +6,7 @@ use crate::ebpf::symtab::elf::pcindex::PCIndex;
 use crate::ebpf::symtab::symtab::SymbolNameResolver;
 use crate::ebpf::symtab::gcache::Resource;
 use crate::error::{Error::NotFound, Result};
+use crate::error::Error::SymbolError;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SymbolIndex {
@@ -69,7 +70,6 @@ impl SymbolNameResolver for SymbolNameTable {
     }
 
     fn is_dead(&self) -> bool {
-        // self.file.err.is_some()
         false
     }
 
@@ -102,6 +102,38 @@ impl SymbolNameTable {
         ).unwrap();
         if !b { return Err(NotFound(format!("failed to get symbols {:?}", link_index))); }
         Ok(s)
+    }
+
+    pub fn new(mut elf_file: MappedElfFile) -> Result<SymbolNameTable> {
+        let (sym, section_sym) = elf_file.get_symbols(SHT_SYMTAB)?;
+        let (dynsym, section_dynsym) = elf_file.get_symbols(SHT_DYNSYM)?;
+        let total = dynsym.len() + sym.len();
+        if total == 0 {
+            return Err(SymbolError("No Symbol".to_string()));
+        }
+
+        let mut all: Vec<SymbolIndex> = Vec::with_capacity(total);
+        all.extend_from_slice(sym.as_slice());
+        all.extend_from_slice(dynsym.as_slice());
+        all.sort();
+
+        let mut res = SymbolNameTable {
+            index: FlatSymbolIndex {
+                links: Vec::from([
+                    elf_file.section_headers[section_sym as usize].clone(),    // should be at 0 - SectionTypeSym
+                    elf_file.section_headers[section_dynsym as usize].clone()  // should be at 1 - SectionTypeDynSym
+                ]),
+                names: Vec::with_capacity(total),
+                values: PCIndex::new(total)
+            },
+            file: elf_file
+        };
+
+        for (i, symbol) in all.iter().enumerate() {
+            res.index.names.push(symbol.name.clone());
+            res.index.values.set(i, symbol.value.clone());
+        }
+        Ok(res)
     }
 }
 

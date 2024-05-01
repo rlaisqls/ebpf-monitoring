@@ -81,9 +81,10 @@ impl MappedElfFile {
         let section = match self.section_headers
             .iter().find(|s| self.strtab.get(&s.sh_name) == Some(&name.to_string())) {
             Some(section) => section,
-            None => return Err(NotFound("section_data_by_section_name".to_string()))
+            None => return Err(NotFound(format!("Section data by section name '{}' not found", name)))
         };
         let mut res = vec![0; section.sh_size as usize];
+
         let mut fd = self.fd.borrow_mut().as_ref().unwrap();
         fd.seek(SeekFrom::Start(section.sh_offset)).unwrap();
         fd.read_exact(&mut res).unwrap();
@@ -94,9 +95,10 @@ impl MappedElfFile {
     pub(crate) fn section_data(&mut self, typ: u32) -> Result<(Vec<u8>, &SectionHeader)> {
         let section = match self.section_headers.iter().find(|s| s.sh_type == typ) {
             Some(section) => section,
-            None => return Err(SymbolError("No symbol section".to_string())),
+            None => return Err(NotFound("No symbol section".to_string())),
         };
         let mut res = vec![0; section.sh_size as usize];
+
         let mut fd = self.fd.borrow_mut().as_ref().unwrap();
         fd.seek(SeekFrom::Start(section.sh_offset)).unwrap();
         fd.read_exact(&mut res).unwrap();
@@ -137,7 +139,7 @@ impl MappedElfFile {
         self.section_headers.clear();
     }
 
-    fn get_symbols(&mut self, typ: u32) -> Result<(Vec<SymbolIndex>, u32)> {
+    pub(crate) fn get_symbols(&mut self, typ: u32) -> Result<(Vec<SymbolIndex>, u32)> {
         match self.header.e_ident[EI_CLASS] {
             ELFCLASS32 => self.get_symbols32(typ),
             ELFCLASS64 => self.get_symbols64(typ),
@@ -162,17 +164,15 @@ impl MappedElfFile {
             data = data.split_off(sym64::SIZEOF_SYM);
 
             let name = LittleEndian::read_u32(&sym[0..4]);
-            let info = sym[4];
             let value = LittleEndian::read_u64(&sym[8..16]);
+            let info = sym[4];
 
             if value != 0 && (info & 0xf) == STT_FUNC {
                 if name >= 0x7fffffff {
                     return Err(SymbolError("Wrong symbol name".to_string()));
                 }
                 let pc = value;
-                // if pc >= opt.filter_from && pc < opt.filter_to {
-                //     continue;
-                // }
+
                 let link_index = get_link_index(typ);
                 symbols.push(SymbolIndex {
                     name: Name::new(name, link_index.clone()),
@@ -200,20 +200,17 @@ impl MappedElfFile {
             data = data.split_off(sym32::SIZEOF_SYM);
 
             let name = LittleEndian::read_u32(&sym[0..4]);
-            let info = sym[12];
             let value = LittleEndian::read_u32(&sym[4..8]);
+            let info = sym[12];
 
             if value != 0 && (info & 0xf) == STT_FUNC {
                 if name >= 0x7fffffff {
                     return Err(SymbolError("Wrong symbol name".to_string()));
                 }
                 let pc = value as u64;
-                // if pc >= opt.filter_from && pc < opt.filter_to {
-                //     continue;
-                // }
                 let link_index = get_link_index(typ);
                 symbols.push(SymbolIndex {
-                    name: Name::new(name, link_index.clone()),
+                    name: Name::new(name, link_index),
                     value: pc,
                 });
                 i += 1;
@@ -229,41 +226,6 @@ fn get_link_index(typ: u32) -> SectionLinkIndex {
     } else {
         SECTION_TYPE_SYM
     }
-}
-
-pub(crate) fn new_symbol_table(mut elf_file: MappedElfFile) -> Result<SymbolNameTable> {
-    let (sym, section_sym) = elf_file.get_symbols(SHT_SYMTAB)?;
-    let (dynsym, section_dynsym) = elf_file.get_symbols(SHT_DYNSYM)?;
-    let total = dynsym.len() + sym.len();
-    if total == 0 {
-        return Err(SymbolError("No Symbol".to_string()));
-    }
-
-    let mut all: Vec<SymbolIndex> = Vec::with_capacity(total);
-    all.extend_from_slice(sym.as_slice());
-    all.extend_from_slice(dynsym.as_slice());
-    all.sort();
-
-    let mut res = SymbolNameTable {
-        index: FlatSymbolIndex {
-            links: Vec::from([
-                elf_file.section_headers[section_sym as usize].clone(),    // should be at 0 - SectionTypeSym
-                elf_file.section_headers[section_dynsym as usize].clone()  // should be at 1 - SectionTypeDynSym
-            ]),
-            names: Vec::with_capacity(total),
-            values: PCIndex::new(total)
-        },
-        file: elf_file
-    };
-
-    for (i, symbol) in all.iter().enumerate() {
-        res.index.names.push(symbol.name.clone());
-        res.index.values.set(i, symbol.value.clone());
-    }
-
-    //dbg!(&res.index.names);
-    //dbg!(&res.index.values);
-    Ok(res)
 }
 
 impl Drop for MappedElfFile {
