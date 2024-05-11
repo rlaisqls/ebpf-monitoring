@@ -25,11 +25,11 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "async-trait",
- "common",
  "docker-api",
  "env_logger",
  "futures",
  "hyper 1.2.0",
+ "iwm",
  "libc",
  "log",
  "log4rs",
@@ -477,49 +477,6 @@ name = "colorchoice"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
-
-[[package]]
-name = "common"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "aya",
- "byteorder",
- "bytes",
- "cfg-if",
- "cgroups",
- "epoll",
- "flate2",
- "gimli",
- "goblin",
- "hermit-abi",
- "hex",
- "lazy_static",
- "libbpf-cargo",
- "libbpf-rs",
- "libbpf-sys",
- "libc",
- "log",
- "lru",
- "nix 0.26.4",
- "object 0.34.0",
- "page_size",
- "perf-event",
- "polling",
- "pprof",
- "prometheus",
- "prost",
- "regex",
- "rustc-demangle",
- "rustix",
- "sha2",
- "sha256",
- "thiserror",
- "tokio",
- "tracing",
- "url",
- "xxhash-rust",
-]
 
 [[package]]
 name = "concurrent-queue"
@@ -1418,6 +1375,50 @@ name = "itoa"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1a46d1a171d865aa5f83f92695765caa047a9b4cbae2cbf37dbd613a793fd4c"
+
+[[package]]
+name = "iwm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aya",
+ "byteorder",
+ "bytes",
+ "cfg-if",
+ "cgroups",
+ "epoll",
+ "flate2",
+ "gimli",
+ "goblin",
+ "hermit-abi",
+ "hex",
+ "lazy_static",
+ "libbpf-cargo",
+ "libbpf-rs",
+ "libbpf-sys",
+ "libc",
+ "log",
+ "lru",
+ "nix 0.26.4",
+ "object 0.34.0",
+ "page_size",
+ "perf-event",
+ "polling",
+ "pprof",
+ "prometheus",
+ "prost",
+ "regex",
+ "rustc-demangle",
+ "rustix",
+ "sha2",
+ "sha256",
+ "thiserror",
+ "tokio",
+ "tonic-build",
+ "tracing",
+ "url",
+ "xxhash-rust",
+]
 
 [[package]]
 name = "js-sys"
