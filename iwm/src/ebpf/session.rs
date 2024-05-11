@@ -107,9 +107,6 @@ pub struct Session<'a> {
     pub bpf: ProfileSkel<'a>,
 
     events_reader: Option<Arc<Mutex<Reader>>>,
-    pid_info_requests: Option<Receiver<u32>>,
-    dead_pid_events: Option<Receiver<u32>>,
-    pid_exec_requests: Option<Receiver<u32>>,
 
     options: SessionOptions,
     pub(crate) round_number: u32,
@@ -148,9 +145,6 @@ impl Session<'_> {
             sym_cache,
             options: opts,
             events_reader: None,
-            pid_info_requests: None,
-            dead_pid_events: None,
-            pid_exec_requests: None,
             wg: Default::default(),
             fds: vec![],
             pids: Default::default(),
@@ -169,14 +163,6 @@ impl Session<'_> {
             self.bpf.progs_mut().do_perf_event(),
         )
         .unwrap();
-
-        let (_pid_info_request_tx, pid_info_request_rx) = channel::<u32>();
-        let (_pid_exec_request_tx, pid_exec_request_rx) = channel::<u32>();
-        let (_dead_pid_events_tx, dead_pid_events_rx) = channel::<u32>();
-
-        self.pid_info_requests = Some(pid_info_request_rx);
-        self.pid_exec_requests = Some(pid_exec_request_rx);
-        self.dead_pid_events = Some(dead_pid_events_rx);
         self.wg.add(4);
 
         self.started = true;
@@ -185,9 +171,6 @@ impl Session<'_> {
     }
 
     fn stop_locked(&mut self) {
-        drop(self.pid_info_requests.take());
-        drop(self.dead_pid_events.take());
-        drop(self.pid_exec_requests.take());
         self.wg.done();
     }
 
@@ -202,7 +185,6 @@ impl Session<'_> {
     }
 
     pub fn update_targets(&mut self, args: &TargetsOptions) {
-        info!("update_targets(&mut self, args: &TargetsOptions)");
         let mut targets = Vec::new();
         {
             let mut target_finder = self.target_finder.lock().unwrap();
@@ -296,8 +278,7 @@ impl Session<'_> {
             }
         }
 
-        // Logging error
-        eprintln!("Failed to read proc information for pid: {}", pid);
+        error!("Failed to read proc information for pid: {}", pid);
         ProcInfoLite {
             pid,
             comm: String::new(),
@@ -523,7 +504,6 @@ impl Session<'_> {
                     };
                     self.walk_stack(&mut sb, &k_stack.unwrap(), a, &mut stats);
                 }
-                // info!("{:?}", &sb.stack);
                 if sb.stack.len() > 1 {
                     sb.stack.reverse();
                     cb(ProfileSample {
@@ -580,8 +560,7 @@ impl Session<'_> {
 
             let mut r = resolver.lock().unwrap();
             let name = if let Some(sym) = r.resolve(instruction_pointer) {
-                //dbg!(&instruction_pointer);
-                let n = if !sym.name.is_empty() {
+                if !sym.name.is_empty() {
                     stats.known += 1;
                     sym.name.clone()
                 } else {
@@ -598,8 +577,7 @@ impl Session<'_> {
                             "[unknown]".to_string()
                         }
                     }
-                };
-                n
+                }
             } else {
                 "[unknown]".to_string()
             };
@@ -648,7 +626,6 @@ impl Session<'_> {
         let mut pids = self.pids.lock().unwrap();
         let mut dead_pids_to_remove = HashSet::new();
         for pid in pids.dead.keys() {
-            // dbg!("cleanup dead pid: {}", pid.to_string());
             dead_pids_to_remove.insert(*pid);
         }
 

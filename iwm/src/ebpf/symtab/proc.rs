@@ -54,7 +54,6 @@ impl SymbolTable for ProcTable {
         if self.err.is_some() {
             return;
         }
-        info!("/proc/{}/maps", self.pid.to_string());
         let path = format!("/proc/{}/maps", self.pid.to_string());
         self.ranges.clear();
         match fs::read_to_string(&path) {

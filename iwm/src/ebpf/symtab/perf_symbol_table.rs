@@ -105,7 +105,6 @@ pub fn parse_perf_maps_executable_modules(perf_maps: &str) -> crate::error::Resu
 			continue;
 		}
 		if let Some(module) = parse_perf_map_line(line) {
-			//"{:?}", module);
 			modules.push(module);
 		}
 	}

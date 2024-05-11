@@ -64,17 +64,15 @@ impl Reader {
 
         let mut buffer_size = 0;
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
-        dbg!(n_cpu);
+
         for i in 0..n_cpu {
             let ring = PerfBuffer::new(i as i32, page_size, 4).unwrap();
-            dbg!(&ring);
             buffer_size = ring.size.clone();
             unsafe {
                 poller.add_with_mode(ring.fd, Event::all(i as usize), PollMode::Level).unwrap();
             }
             pause_fds.push(ring.fd);
-            let bpf = bpf_map_update_elem(array.as_fd(), Some(&i), &ring.fd, 0).unwrap();
-            //dbg!(bpf);
+            bpf_map_update_elem(array.as_fd(), Some(&i), &ring.fd, 0).unwrap();
             rings.push(Arc::new(Mutex::new(ring)));
         }
 

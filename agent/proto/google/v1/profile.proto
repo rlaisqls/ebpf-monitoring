@@ -44,54 +44,22 @@ option java_outer_classname = "ProfileProto";
 option java_package = "com.google.perftools.profiles";
 
 message Profile {
-  // A description of the samples associated with each Sample.value.
-  // For a cpu profile this might be:
-  //   [["cpu","nanoseconds"]] or [["wall","seconds"]] or [["syscall","count"]]
-  // For a heap profile, this might be:
-  //   [["allocations","count"], ["space","bytes"]],
-  // If one of the values represents the number of events represented
-  // by the sample, by convention it should be at index 0 and use
-  // sample_type.unit == "count".
   repeated ValueType sample_type = 1;
-  // The set of samples recorded in this profile.
   repeated Sample sample = 2;
-  // Mapping from address ranges to the image/binary/library mapped
-  // into that address range.  mapping[0] will be the main binary.
   repeated Mapping mapping = 3;
-  // Useful program location
   repeated Location location = 4;
-  // Functions referenced by locations
   repeated Function function = 5;
-  // A common table for strings referenced by various messages.
-  // string_table[0] must always be "".
   repeated string string_table = 6;
-  // frames with Function.function_name fully matching the following
-  // regexp will be dropped from the samples, along with their successors.
   int64 drop_frames = 7; // Index into string table.
-  // frames with Function.function_name fully matching the following
-  // regexp will be kept, even if it matches drop_frames.
   int64 keep_frames = 8; // Index into string table.
-
-  // The following fields are informational, do not affect
-  // interpretation of results.
-
-  // Time of collection (UTC) represented as nanoseconds past the epoch.
   int64 time_nanos = 9;
-  // Duration of the profile, if a duration makes sense.
   int64 duration_nanos = 10;
-  // The kind of events between sampled ocurrences.
-  // e.g [ "cpu","cycles" ] or [ "heap","bytes" ]
   ValueType period_type = 11;
-  // The number of events between sampled occurrences.
   int64 period = 12;
-  // Freeform text associated to the profile.
   repeated int64 comment = 13; // Indices into string table.
-  // Index into the string table of the type of the preferred sample
-  // value. If unset, clients should default to the last sample value.
   int64 default_sample_type = 14;
 }
 
-// ValueType describes the semantics and measurement units of a value.
 message ValueType {
   int64 type = 1; // Index into string table.
   int64 unit = 2; // Index into string table.
@@ -161,52 +129,22 @@ message Mapping {
 
 // Describes function and line table debug information.
 message Location {
-  // Unique nonzero id for the location.  A profile could use
-  // instruction addresses or any integer sequence as ids.
   uint64 id = 1;
-  // The id of the corresponding profile.Mapping for this location.
-  // It can be unset if the mapping is unknown or not applicable for
-  // this profile type.
   uint64 mapping_id = 2;
-  // The instruction address for this location, if available.  It
-  // should be within [Mapping.memory_start...Mapping.memory_limit]
-  // for the corresponding mapping. A non-leaf address may be in the
-  // middle of a call instruction. It is up to display tools to find
-  // the beginning of the instruction if necessary.
   uint64 address = 3;
-  // Multiple line indicates this location has inlined functions,
-  // where the last entry represents the caller into which the
-  // preceding entries were inlined.
-  //
-  // E.g., if memcpy() is inlined into printf:
-  //    line[0].function_name == "memcpy"
-  //    line[1].function_name == "printf"
   repeated Line line = 4;
-  // Provides an indication that multiple symbols map to this location's
-  // address, for example due to identical code folding by the linker. In that
-  // case the line information above represents one of the multiple
-  // symbols. This field must be recomputed when the symbolization state of the
-  // profile changes.
   bool is_folded = 5;
 }
 
 message Line {
-  // The id of the corresponding profile.Function for this line.
   uint64 function_id = 1;
-  // Line number in source code.
   int64 line = 2;
 }
 
 message Function {
-  // Unique nonzero id for the function.
   uint64 id = 1;
-  // Name of the function, in human-readable form if available.
   int64 name = 2; // Index into string table
-  // Name of the function, as identified by the system.
-  // For instance, it can be a C++ mangled name.
   int64 system_name = 3; // Index into string table
-  // Source file containing the function.
   int64 filename = 4; // Index into string table
-  // Line number in source file.
   int64 start_line = 5;
 }
