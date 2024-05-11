@@ -61,7 +61,6 @@ async fn main() -> Result<(), ()> {
     };
     let discovery_component = DockerDiscovery::new(discovery_args);
     let targets = discovery_component.refresh().await;
-
     let option = Options {
         id: "sdf".to_string(),
         data_path: "/opt".to_string(),
@@ -85,12 +84,6 @@ async fn main() -> Result<(), ()> {
     let argument = ebpf_linux::Arguments {
         forward_to: Arc::new(Vec::from([Box::new(fanout_client)])),
         targets,
-        // vec![
-        //     [("__address__", "pyroscope:4100"), ("service_name", "pyroscope")],
-        //     [("__address__", "agent:12345"), ("service_name", "agent")],
-        // ].iter().map(|item| item.iter().cloned()
-        //     .map(|(k, v)| (k.to_string(), v.to_string())).collect()
-        // ).collect(),
         collect_interval: Duration::from_secs(15),
         sample_rate: 97,
         pid_cache_size: 32,

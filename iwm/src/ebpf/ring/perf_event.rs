@@ -58,22 +58,6 @@ impl PerfEvent {
 		}
 		Ok(())
 	}
-
-	pub fn attach_perf_event(&mut self, _prog: &mut Program) -> Result<()> {
-		//let link = prog.attach_perf_event(self.fd).unwrap();
-		// let err = unsafe { libc::ioctl(self.fd, PERF_EVENT_IOC_SET_BPF as c_ulong, prog.as_fd().as_raw_fd()) };
-		// if err == -1 {
-		// 	return Err(OSError("fail to call PERF_EVENT_IOC_SET_BPF".to_string()));
-		// }
-		// let err = unsafe { libc::ioctl(self.fd, PERF_EVENT_IOC_ENABLE as c_ulong, 0) };
-		// if err == -1 {
-		// 	return Err(OSError("fail to call PERF_EVENT_IOC_ENABLE".to_string()));
-		// }
-		//self.link = Some(link);
-		self.ioctl = true;
-		dbg!(&self);
-		Ok(())
-	}
 }
 
 impl Drop for PerfEvent {

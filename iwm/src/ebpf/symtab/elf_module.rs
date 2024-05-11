@@ -12,7 +12,7 @@ use rustix::path::Arg;
 
 use crate::ebpf::metrics::symtab::SymtabMetrics;
 use crate::ebpf::symtab::elf::buildid::{BuildID, BuildIdentified};
-use crate::ebpf::symtab::elf::elfmmap::{MappedElfFile, new_symbol_table};
+use crate::ebpf::symtab::elf::elfmmap::{MappedElfFile};
 use crate::ebpf::symtab::elf::symbol_table::{SymbolNameTable};
 use crate::ebpf::symtab::elf_cache::ElfCache;
 use crate::ebpf::symtab::procmap::ProcMap;

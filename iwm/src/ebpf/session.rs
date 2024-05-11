@@ -38,8 +38,10 @@ use crate::ebpf::ring::reader::Reader;
 use crate::ebpf::sd::target::{EbpfTarget, TargetFinder, TargetsOptions};
 use crate::ebpf::session::profile::profile_bss_types::{pid_config, sample_key};
 use crate::ebpf::symtab::elf_cache::ElfCacheDebugInfo;
+use crate::ebpf::symtab::elf_module::ElfTableOptions;
 use crate::ebpf::symtab::gcache::{GCacheDebugInfo, Resource};
-use crate::ebpf::symtab::proc::ProcTableDebugInfo;
+use crate::ebpf::symtab::perf_symbol_table::PerfSymbolTable;
+use crate::ebpf::symtab::proc::{ProcTable, ProcTableDebugInfo};
 use crate::ebpf::symtab::symbols::{CacheOptions, SymbolCache};
 use crate::ebpf::symtab::symtab::SymbolTable;
 use crate::ebpf::sync::{ProfilingType};
@@ -101,6 +103,7 @@ impl Default for SessionDebugInfo {
 pub struct Session<'a> {
     pub target_finder: Arc<Mutex<TargetFinder>>,
     pub(crate) sym_cache: Arc<Mutex<SymbolCache>>,
+    tmp: Option<Arc<Mutex<PerfSymbolTable>>>,
     pub bpf: ProfileSkel<'a>,
 
     events_reader: Option<Arc<Mutex<Reader>>>,
@@ -140,6 +143,7 @@ impl Session<'_> {
         Ok(Self {
             started: false,
             bpf,
+            tmp: None,
             target_finder,
             sym_cache,
             options: opts,
@@ -488,6 +492,10 @@ impl Session<'_> {
                     }
                     let stats = StackResolveStats::default();
                     let proc = {
+                        // if self.tmp.is_none() {
+                        //     self.tmp = Some(Arc::new(Mutex::new(PerfSymbolTable::new(ck.pid as i32))));
+                        // }
+                        // self.tmp.clone().unwrap()
                         let mut sym_cache = self.sym_cache.lock().unwrap();
                         if sym_cache.get_proc_table(ck.pid).is_none() {
                             pids.dead.insert(ck.pid, ());

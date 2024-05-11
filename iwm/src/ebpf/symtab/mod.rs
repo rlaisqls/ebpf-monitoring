@@ -9,3 +9,4 @@ pub mod table;
 pub mod elf_module;
 pub mod elf;
 pub mod stat;
+pub mod perf_symbol_table;

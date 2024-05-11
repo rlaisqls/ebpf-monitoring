@@ -44,7 +44,6 @@ impl Resource for ProcTable {
     fn refresh_resource(&mut self) {
         self.refresh()
     }
-
     fn cleanup_resource(&mut self) {
         self.cleanup()
     }
@@ -60,17 +59,6 @@ impl SymbolTable for ProcTable {
         self.ranges.clear();
         match fs::read_to_string(&path) {
             Ok(proc_maps) => match self.push_proc_maps(proc_maps) {
-                Err(e) => { self.err = Some(e); }
-                _ => {}
-            },
-            Err(e) => {
-                self.err = Some(ProcError(e.to_string()));
-            }
-        }
-        info!("/tmp/perf-{}.map", self.pid.to_string());
-        let perf_path = format!("/tmp/perf-{}.map", "804423");
-        match fs::read_to_string(&perf_path) {
-            Ok(perf_maps) => match self.push_perf_maps(perf_maps) {
                 Err(e) => { self.err = Some(e); }
                 _ => {}
             },
@@ -206,28 +194,6 @@ impl ProcTable {
         Ok(())
     }
 
-    fn push_perf_maps(&mut self, perf_maps: String) -> Result<()> {
-        dbg!("push_perf_maps(&mut self, perf_maps: String)");
-        let mut files_to_keep: HashMap<File, ()> = HashMap::new();
-        let maps = match parse_perf_maps_executable_modules(perf_maps.deref()) {
-            Ok(maps) => maps,
-            Err(err) => return Err(err),
-        };
-        // info!("{:?}", &maps);
-
-        for map in maps {
-            files_to_keep.insert(map.file(), ());
-            let m = Arc::new(Mutex::new(map));
-            if let Some(elf_table) = self.get_elf_table(m.clone()) {
-                self.ranges.push(Arc::new(Mutex::new(ElfRange {
-                    map_range: m.clone(),
-                    elf_table,
-                })));
-            }
-        }
-        Ok(())
-    }
-
     pub(crate) fn debug_info(&self) -> ProcTableDebugInfo {
         let mut res = ProcTableDebugInfo {
             pid: self.pid,
@@ -305,49 +271,6 @@ pub fn parse_proc_maps_executable_modules(
         }
     }
     Ok(modules)
-}
-
-pub fn parse_perf_maps_executable_modules(perf_maps: &str) -> Result<Vec<ProcMap>> {
-    let mut modules = Vec::new();
-    let mut remaining = perf_maps;
-    while !remaining.is_empty() {
-        let nl = remaining
-            .chars()
-            .position(|x| x == '\n')
-            .unwrap_or(remaining.len());
-        let (line, rest) = remaining.split_at(nl);
-        remaining = if rest.is_empty() { rest } else { &rest[1..] };
-        if line.is_empty() {
-            continue;
-        }
-        if let Some(module) = parse_perf_map_line(line) {
-            modules.push(module);
-        }
-    }
-    Ok(modules)
-}
-
-// ffff7c045b40 10c arrayof_jint_disjoint_arraycopy
-fn parse_perf_map_line(line: &str) -> Option<ProcMap> {
-    let mut parts = line.split(' ');
-    let start_addr_bytes = parts.next().unwrap();
-    let size = parts.next().unwrap();
-    let pathname = line.rsplit(' ').next().unwrap();
-
-    let perms = ProcMapPermissions::default();
-    let start_addr = u64::from_str_radix(start_addr_bytes, 16).unwrap();
-    let end_addr = start_addr + u64::from_str_radix(size, 16).unwrap();
-
-    let res = ProcMap {
-        start_addr,
-        end_addr,
-        perms,
-        offset: 0,
-        dev: 0,
-        inode: 0,
-        pathname: pathname.to_string(),
-    };
-    Some(res)
 }
 
 // 7f5822ebe000-7f5822ec0000 r--p 00000000 09:00 533429  /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2

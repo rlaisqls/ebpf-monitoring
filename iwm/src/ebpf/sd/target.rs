@@ -178,10 +178,22 @@ impl TargetFinder {
             }
         }
 
+        let tmp_target = [
+            ("__meta_docker_port_public".to_string(), "8000".to_string()),
+            ("__meta_docker_port_public_ip".to_string(), "0.0.0.0".to_string()),
+            ("__address__".to_string(), "192.168.112.3:8000".to_string()),
+            ("__meta_docker_container_label_com_docker_compose_project".to_string(), "test".to_string()),
+            ("__meta_docker_container_label_com_docker_compose_container_number".to_string(), "1".to_string()),
+            ("__meta_docker_container_name".to_string(), "/springboot_mongodb".to_string()),
+            ("__meta_docker_port_private".to_string(), "8000".to_string()),
+            ("__meta_docker_network_ip".to_string(), "0.0.0.0".to_string()),
+        ].iter().cloned().collect();
+        let pid = 852564;
+        pid2_target.insert(pid.clone(), EbpfTarget::new("".to_string(), pid.clone(), tmp_target));
+
         if !opts.targets.is_empty() && container_id2_target.is_empty() && pid2_target.is_empty() {
             warn!("No targets found");
         }
-
         self.cid2target = container_id2_target;
         self.pid2target = pid2_target;
 

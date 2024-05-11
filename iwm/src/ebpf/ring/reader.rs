@@ -74,11 +74,11 @@ impl Reader {
             }
             pause_fds.push(ring.fd);
             let bpf = bpf_map_update_elem(array.as_fd(), Some(&i), &ring.fd, 0).unwrap();
-            dbg!(bpf);
+            //dbg!(bpf);
             rings.push(Arc::new(Mutex::new(ring)));
         }
 
-        dbg!(&poller);
+        //dbg!(&poller);
         Ok(Reader {
             poller,
             deadline: None,

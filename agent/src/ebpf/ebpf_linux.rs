@@ -194,8 +194,8 @@ fn convert_session_options(_args: &Arguments, ms: Arc<ProfileMetrics>) -> Sessio
     SessionOptions {
         collect_user: true,
         collect_kernel: true,
-        unknown_symbol_module_offset: true,
-        unknown_symbol_address: true,
+        unknown_symbol_module_offset: false,//true,
+        unknown_symbol_address: false,//true,
         sample_rate: 97,
         python_enabled: true,
         cache_options: CacheOptions {
